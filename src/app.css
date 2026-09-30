@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* 主题手动切换：dark: 变体跟随 <html> 上的 .dark 类（跟随系统时由 JS 写入） */
+@custom-variant dark (&:where(.dark, .dark *));
