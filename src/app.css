@@ -2,3 +2,23 @@
 
 /* 主题手动切换：dark: 变体跟随 <html> 上的 .dark 类（跟随系统时由 JS 写入） */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* WebView2's native option popup can ignore inherited text colors. Keep its
+   foreground, background, and native control palette aligned with the theme. */
+select {
+  color-scheme: light;
+}
+
+.dark select {
+  color-scheme: dark;
+}
+
+select option {
+  color: #171717;
+  background-color: #fff;
+}
+
+.dark select option {
+  color: #f5f5f5;
+  background-color: #262626;
+}

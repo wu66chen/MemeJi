@@ -10,23 +10,25 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
 
 ## 截图展示
 
-<!-- 将截图保存到 docs/screenshots/，收到后以实际图片替换这些占位说明。 -->
 <table>
   <tr>
     <td align="center" width="33%">
-      <strong>图库与收藏夹分类</strong><br />
-      <code>docs/screenshots/library.png</code><br />
-      主窗口显示分类组、收藏夹和图库。
+      <a href="docs/screenshots/library.png">
+        <img src="docs/screenshots/library.png" alt="图库与收藏夹分类" width="100%" />
+      </a><br />
+      <strong>图库与收藏夹分类</strong>
     </td>
     <td align="center" width="33%">
-      <strong>Quick Picker</strong><br />
-      <code>docs/screenshots/quick-picker.png</code><br />
-      展示搜索、键盘导航和表情选择。
+      <a href="docs/screenshots/quick-picker.png">
+        <img src="docs/screenshots/quick-picker.png" alt="Quick Picker" width="100%" />
+      </a><br />
+      <strong>Quick Picker</strong>
     </td>
     <td align="center" width="33%">
-      <strong>设置</strong><br />
-      <code>docs/screenshots/settings.png</code><br />
-      展示自动粘贴与更新偏好选项。
+      <a href="docs/screenshots/settings.png">
+        <img src="docs/screenshots/settings.png" alt="设置" width="100%" />
+      </a><br />
+      <strong>设置</strong>
     </td>
   </tr>
 </table>
