@@ -1,6 +1,35 @@
-# MemeJi（表情姬）
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" alt="MemeJi logo" width="128" />
+</p>
+
+<h1 align="center">MemeJi（表情姬）</h1>
+
+<p align="center">Windows 本地表情包管理器 · 收藏整理 · Quick Picker · 自动粘贴</p>
 
 MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用收藏夹、分类组、标签和描述整理图库，再通过全局快捷键呼出 Quick Picker 搜索、复制并粘贴表情。
+
+## 截图展示
+
+<!-- 将截图保存到 docs/screenshots/，收到后以实际图片替换这些占位说明。 -->
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <strong>图库与收藏夹分类</strong><br />
+      <code>docs/screenshots/library.png</code><br />
+      主窗口显示分类组、收藏夹和图库。
+    </td>
+    <td align="center" width="33%">
+      <strong>Quick Picker</strong><br />
+      <code>docs/screenshots/quick-picker.png</code><br />
+      展示搜索、键盘导航和表情选择。
+    </td>
+    <td align="center" width="33%">
+      <strong>设置</strong><br />
+      <code>docs/screenshots/settings.png</code><br />
+      展示自动粘贴与更新偏好选项。
+    </td>
+  </tr>
+</table>
 
 ## 功能
 
