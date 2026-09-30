@@ -46,3 +46,7 @@ Windows 安装包由 Tauri 生成在 `src-tauri/target/release/bundle/nsis/`。
 - [自动粘贴的焦点判定与限制](docs/quick-picker-auto-paste.md)
 - [GitHub 更新发布配置](docs/updater-setup.md)
 
+
+## 许可证
+
+本项目基于 MIT License 发布，详见 [LICENSE](LICENSE)。
