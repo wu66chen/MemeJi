@@ -34,6 +34,7 @@
   let updateState = $state("");
   let updateConfigured = $state<boolean | null>(null);
   let checkingUpdates = $state(false);
+  let lastPasteStatus = $state('');
 
   function load() {
     void invoke<AppConfig>("get_config").then((c) => (cfg = c)).catch((e) => alert(String(e)));
@@ -41,6 +42,7 @@
     void invoke<{ configured: boolean }>("get_updater_status")
       .then((s) => (updateConfigured = s.configured))
       .catch(() => (updateConfigured = false));
+    void invoke<string>("get_last_paste_status").then((status) => (lastPasteStatus = status)).catch(() => {});
   }
   load();
 
@@ -137,15 +139,18 @@
 </script>
 
 <div class="fixed inset-0 z-50 grid place-items-center bg-neutral-900/60 p-6">
-  <div class="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-2xl dark:bg-neutral-800">
-    <div class="mb-4 flex items-center justify-between">
+  <div class="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-neutral-800">
+    <div class="flex shrink-0 items-center justify-between border-b border-neutral-200 px-6 py-4 dark:border-neutral-700">
       <h2 class="text-lg font-semibold">设置</h2>
       <button
         type="button"
-        class="rounded px-2 py-1 text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+        aria-label="关闭设置"
+        class="grid h-8 w-8 place-items-center rounded-full text-xl leading-none text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-700 dark:hover:text-white"
         onclick={onClose}
-      >关闭</button>
+      >×</button>
     </div>
+
+    <div class="min-h-0 overflow-y-auto px-6 py-5">
 
     {#if cfg}
       <section class="mb-5">
@@ -186,6 +191,7 @@
           自动粘贴到原输入框
         </label>
         <p class="mt-1 text-xs text-neutral-500">若无法定位原输入框或自动粘贴失败，表情仍保留在剪贴板，可手动按 Ctrl+V 粘贴。</p>
+        {#if lastPasteStatus}<p class="mt-2 text-xs text-neutral-500" role="status">最近一次：{lastPasteStatus}</p>{/if}
       </section>
 
       <section class="mb-5">
@@ -257,5 +263,6 @@
     {:else}
       <p class="text-sm text-neutral-400">加载中…</p>
     {/if}
+    </div>
   </div>
 </div>

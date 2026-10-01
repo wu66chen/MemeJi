@@ -12,12 +12,19 @@ pub mod updater;
 use library::open_db;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, WebviewWindow, WindowEvent,
 };
+
+#[derive(Default)]
+struct TrayClickState {
+    generation: u64,
+    suppress_until: Option<Instant>,
+}
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub struct AppState {
@@ -30,6 +37,7 @@ pub struct AppState {
     pub clipboard_temp: Mutex<smartcopy::TempStore>,
     /// 呼出 Quick Picker 前的前台应用（复制后恢复焦点）
     pub summoner_focus: Mutex<Option<focus::CapturedFocus>>,
+    pub last_paste_status: Mutex<String>,
     /// 应用偏好（与图库数据库分离存放）
     pub config: Mutex<config::AppConfig>,
     pub config_path: PathBuf,
@@ -56,7 +64,8 @@ fn default_library_root() -> PathBuf {
 /// （重新）注册全局快捷键：先解绑旧的，再绑新的。
 pub fn apply_hotkey(app: &tauri::AppHandle, accelerator: &str) -> Result<(), String> {
     let gs = app.global_shortcut();
-    gs.unregister_all().map_err(|e| format!("解绑旧快捷键失败: {e}"))?;
+    gs.unregister_all()
+        .map_err(|e| format!("解绑旧快捷键失败: {e}"))?;
     gs.register(accelerator)
         .map_err(|e| format!("快捷键 {accelerator} 注册失败（可能被其他程序占用）: {e}"))
 }
@@ -178,6 +187,7 @@ pub fn run() {
             commands::remove_meme_from_collection,
             commands::get_config,
             commands::set_auto_paste,
+            commands::get_last_paste_status,
             updater::get_updater_status,
             updater::set_update_mode,
             commands::complete_onboarding,
@@ -206,8 +216,7 @@ pub fn run() {
                 .clone()
                 .map(PathBuf::from)
                 .unwrap_or_else(default_library_root);
-            let conn = open_db(&library_root)
-                .map_err(|e| format!("打开表情库失败: {e}"))?;
+            let conn = open_db(&library_root).map_err(|e| format!("打开表情库失败: {e}"))?;
 
             // 官方表情包：安装包内置贴纸，首启/换库/版本升级时自动导入
             // （失败只记日志，绝不阻塞应用启动）
@@ -223,14 +232,16 @@ pub fn run() {
                 Ok(None) => {}
                 Err(e) => eprintln!("官方表情包导入失败: {e}"),
             }
-            let clipboard_temp =
-                Mutex::new(smartcopy::TempStore::new(std::env::temp_dir().join("meme-manager-clipboard")));
+            let clipboard_temp = Mutex::new(smartcopy::TempStore::new(
+                std::env::temp_dir().join("meme-manager-clipboard"),
+            ));
             app.manage(AppState {
                 conn: Mutex::new(conn),
                 library_root: Mutex::new(library_root),
                 thumb_queue: Mutex::new(HashSet::new()),
                 clipboard_temp,
                 summoner_focus: Mutex::new(None),
+                last_paste_status: Mutex::new(String::new()),
                 config: Mutex::new(cfg.clone()),
                 config_path,
             });
@@ -241,6 +252,8 @@ pub fn run() {
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &summon, &settings, &quit])?;
+            let tray_clicks = Arc::new(Mutex::new(TrayClickState::default()));
+            let event_clicks = tray_clicks.clone();
 
             let tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -263,6 +276,59 @@ pub fn run() {
                         }
                     }
                     "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(move |tray, event| match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } => {
+                        let Ok(mut clicks) = event_clicks.lock() else {
+                            return;
+                        };
+                        if clicks
+                            .suppress_until
+                            .is_some_and(|until| Instant::now() < until)
+                        {
+                            return;
+                        }
+                        clicks.generation = clicks.generation.wrapping_add(1);
+                        let generation = clicks.generation;
+                        drop(clicks);
+                        let wait = unsafe {
+                            windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime()
+                        };
+                        let tray = tray.clone();
+                        let pending = event_clicks.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(wait as u64 + 30));
+                            if pending
+                                .lock()
+                                .is_ok_and(|clicks| clicks.generation == generation)
+                            {
+                                let _ = tray.with_inner_tray_icon(|inner| inner.show_menu());
+                            }
+                        });
+                    }
+                    TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        if let Ok(mut clicks) = event_clicks.lock() {
+                            clicks.generation = clicks.generation.wrapping_add(1);
+                            let wait = unsafe {
+                                windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime()
+                            };
+                            clicks.suppress_until =
+                                Some(Instant::now() + Duration::from_millis(wait as u64));
+                        }
+                        if let Some(main) = tray.app_handle().get_webview_window("main") {
+                            let _ = main.unminimize();
+                            let _ = main.show();
+                            let _ = main.set_focus();
+                        }
+                    }
                     _ => {}
                 })
                 .build(app)?;

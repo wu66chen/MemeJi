@@ -1,7 +1,7 @@
 # Smart Copy 兼容矩阵 Checklist
 
 > 平台原语：位图通道只承载单帧；文件引用（Windows CF_HDROP / macOS file-url）是可保留动画的通用通道。
-> 实现策略：静态图 → CF_DIB + CF_DIBV5 + PNG 流；动图 → CF_HDROP 临时副本 + 首帧三格式兜底。
+> 实现策略：Windows 静态图与动图都提供 CF_HDROP 临时副本 + CF_DIB + CF_DIBV5 + PNG 流；动图的位图格式仅为首帧。
 > **填写说明**：实测后在表格中填 ✅（保留动画 / 正常成图）、⚠️（降级为静态/首帧，符合兜底预期）、❌（失败）并注明日期与版本。
 
 ## 1. 动图矩阵（核心验收）

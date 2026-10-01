@@ -8,11 +8,25 @@ pub fn import_paths(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     paths: Vec<String>,
+    target_collection_id: Option<i64>,
 ) -> Result<library::ImportResult, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    if let Some(id) = target_collection_id {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM collection WHERE id = ?1)",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("当前收藏夹已不存在，请重新选择后再导入".into());
+        }
+    }
     let library_root = state.library_root_clone();
     let p: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    let result = library::import_paths(&conn, &library_root, &p).map_err(|e| e.to_string())?;
+    let result = library::import_paths_into(&conn, &library_root, &p, target_collection_id)
+        .map_err(|e| e.to_string())?;
     drop(conn);
     // 导入顺带：新入库的 hash 排进缩略图队列（同 hash 去重，miss 才生成）
     if !result.content_hashes.is_empty() {
@@ -38,7 +52,10 @@ pub fn list_memes(
     drop(conn);
     let library_root = state.library_root_clone();
     for m in memes.iter_mut() {
-        m.internal_path = library_root.join(&m.internal_path).to_string_lossy().to_string();
+        m.internal_path = library_root
+            .join(&m.internal_path)
+            .to_string_lossy()
+            .to_string();
         // 已缓存零成本：命中缓存才给路径，miss 由前端进入惰性生成队列
         m.thumbnail_path = thumbs::cached_thumbnail_path(&library_root, &m.content_hash);
     }
@@ -52,19 +69,28 @@ pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<library::Colle
 }
 
 #[tauri::command]
-pub fn list_collection_groups(state: State<'_, AppState>) -> Result<Vec<library::CollectionGroup>, String> {
+pub fn list_collection_groups(
+    state: State<'_, AppState>,
+) -> Result<Vec<library::CollectionGroup>, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     library::list_collection_groups(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn create_collection_group(state: State<'_, AppState>, name: String) -> Result<library::CollectionGroup, String> {
+pub fn create_collection_group(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<library::CollectionGroup, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     organize::create_collection_group(&conn, &name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn rename_collection_group(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+pub fn rename_collection_group(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     organize::rename_collection_group(&conn, id, &name).map_err(|e| e.to_string())
 }
@@ -82,13 +108,20 @@ pub fn reorder_collection_groups(state: State<'_, AppState>, ids: Vec<i64>) -> R
 }
 
 #[tauri::command]
-pub fn move_collection_to_group(state: State<'_, AppState>, id: i64, group_id: Option<i64>) -> Result<(), String> {
+pub fn move_collection_to_group(
+    state: State<'_, AppState>,
+    id: i64,
+    group_id: Option<i64>,
+) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     organize::move_collection_to_group(&conn, id, group_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn create_collection(state: State<'_, AppState>, name: String) -> Result<library::Collection, String> {
+pub fn create_collection(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<library::Collection, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     organize::create_collection(&conn, &name).map_err(|e| e.to_string())
 }
@@ -138,7 +171,11 @@ pub fn remove_tag(
 }
 
 #[tauri::command]
-pub fn set_favorite(state: State<'_, AppState>, meme_id: i64, favorite: bool) -> Result<(), String> {
+pub fn set_favorite(
+    state: State<'_, AppState>,
+    meme_id: i64,
+    favorite: bool,
+) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     organize::set_favorite(&conn, meme_id, favorite).map_err(|e| e.to_string())
 }
@@ -161,24 +198,39 @@ pub fn delete_meme(state: State<'_, AppState>, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn batch_edit_memes(app: tauri::AppHandle, meme_ids: Vec<i64>, action: organize::BatchAction) -> Result<usize, String> {
+pub async fn batch_edit_memes(
+    app: tauri::AppHandle,
+    meme_ids: Vec<i64>,
+    action: organize::BatchAction,
+) -> Result<usize, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
         organize::batch_edit(&conn, &meme_ids, &action).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn delete_memes(app: tauri::AppHandle, meme_ids: Vec<i64>) -> Result<organize::BatchDeleteResult, String> {
+pub async fn delete_memes(
+    app: tauri::AppHandle,
+    meme_ids: Vec<i64>,
+) -> Result<organize::BatchDeleteResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        Ok(organize::batch_delete(&conn, &state.library_root_clone(), &meme_ids))
-    }).await.map_err(|e| e.to_string())?
+        Ok(organize::batch_delete(
+            &conn,
+            &state.library_root_clone(),
+            &meme_ids,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Smart Copy：静态图走位图通道；动图走临时副本文件引用 + 首帧位图兜底。
+/// Smart Copy：静态图和动图都提供文件引用及位图通道，兼容不同粘贴目标。
 /// 成功后隐藏 Quick Picker 并把焦点还给呼出方应用。
 #[tauri::command]
 pub fn smart_copy(
@@ -221,17 +273,55 @@ pub fn smart_copy(
     let auto_paste = state.config.lock().map_err(|e| e.to_string())?.auto_paste;
     std::thread::sleep(std::time::Duration::from_millis(120));
     crate::focus::restore(focus.as_ref());
-    if auto_paste {
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        if !crate::focus::paste_if_editable(focus.as_ref()) {
-            eprintln!("自动粘贴未执行：原输入目标不可确认或系统拒绝注入；图片已复制到剪贴板");
+    let paste_status = if !auto_paste {
+        "已复制；自动粘贴已关闭".to_string()
+    } else if !crate::focus::has_editable_target(focus.as_ref()) {
+        "已复制；未识别到原输入框，可手动粘贴".to_string()
+    } else {
+        let mut last_failure = crate::focus::PasteFailure::InputChanged;
+        let mut sent = false;
+        // 一些应用恢复焦点较慢；短时重试时仍逐次校验原窗口与原输入目标。
+        for _ in 0..8 {
+            std::thread::sleep(std::time::Duration::from_millis(70));
+            match crate::focus::paste_if_editable(focus.as_ref()) {
+                Ok(()) => {
+                    sent = true;
+                    break;
+                }
+                Err(failure) => {
+                    last_failure = failure;
+                    if matches!(failure, crate::focus::PasteFailure::SystemRejected) {
+                        break;
+                    }
+                }
+            }
         }
+        if sent {
+            "已向原输入框发送粘贴按键".to_string()
+        } else {
+            format!("已复制；自动粘贴未执行：{}", last_failure.explanation())
+        }
+    };
+    if let Ok(mut status) = state.last_paste_status.lock() {
+        *status = paste_status.clone();
+    }
+    if paste_status.contains("未执行") {
+        eprintln!("{paste_status}");
     }
     Ok(())
 }
 
-/// 静态图：CF_DIB + CF_DIBV5 + PNG 流；
-/// 动图：CF_HDROP（临时副本）+ 首帧 CF_DIB/CF_DIBV5/PNG 兜底。
+#[tauri::command]
+pub fn get_last_paste_status(state: State<'_, AppState>) -> String {
+    state
+        .last_paste_status
+        .lock()
+        .map(|status| status.clone())
+        .unwrap_or_default()
+}
+
+/// 静态图与动图：CF_HDROP（临时副本）+ CF_DIB/CF_DIBV5/PNG。
+/// 动图的位图格式只表示首帧，文件引用保留动画。
 fn build_clipboard_formats(
     bytes: &[u8],
     ext: &str,
@@ -239,38 +329,37 @@ fn build_clipboard_formats(
     _filename: &str,
     state: &State<'_, AppState>,
 ) -> Result<Vec<(u32, Vec<u8>)>, String> {
-    let animated = thumbs::detect_animation(bytes).map_err(|e| e.to_string())?;
-    if animated {
-        // 临时副本：下次复制清上一批，再放当前这一份
-        let temp_path = {
-            let mut store = state.clipboard_temp.lock().map_err(|e| e.to_string())?;
-            store.clear_previous().map_err(|e| e.to_string())?;
-            // 保留扩展名让目标应用识别格式；文件名冲突会被覆盖（同批仅一份）
-            let name = temp_copy_name(hash, ext);
-            store.stage(bytes, &name).map_err(|e| e.to_string())?
-        };
-        let hdrop = smartcopy::hdrop_from_paths(&[temp_path.as_path()]);
-        let frame = thumbs::decode_first_frame(bytes).map_err(|e| e.to_string())?;
-        let rgba = frame.to_rgba8();
-        Ok(vec![
-            (smartcopy::CF_HDROP, hdrop),
-            (smartcopy::CF_DIB, smartcopy::dib_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32)),
-            (smartcopy::CF_DIBV5, dibv5_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32)),
-            (png_format(), png_bytes(&frame)),
-        ])
-    } else {
-        let frame = thumbs::decode_first_frame(bytes).map_err(|e| e.to_string())?;
-        let rgba = frame.to_rgba8();
-        Ok(vec![
-            (smartcopy::CF_DIB, smartcopy::dib_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32)),
-            (smartcopy::CF_DIBV5, dibv5_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32)),
-            (png_format(), png_bytes(&frame)),
-        ])
-    }
+    // 临时副本：下次复制清上一批，保留扩展名供目标应用识别格式。
+    let temp_path = {
+        let mut store = state.clipboard_temp.lock().map_err(|e| e.to_string())?;
+        store.clear_previous().map_err(|e| e.to_string())?;
+        store
+            .stage(bytes, &temp_copy_name(hash, ext))
+            .map_err(|e| e.to_string())?
+    };
+    let frame = thumbs::decode_first_frame(bytes).map_err(|e| e.to_string())?;
+    let rgba = frame.to_rgba8();
+    let hdrop = smartcopy::hdrop_from_paths(&[temp_path.as_path()]);
+    Ok(vec![
+        (smartcopy::CF_HDROP, hdrop),
+        (
+            smartcopy::CF_DIB,
+            smartcopy::dib_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32),
+        ),
+        (
+            smartcopy::CF_DIBV5,
+            dibv5_from_rgba(rgba.as_raw(), rgba.width() as i32, rgba.height() as i32),
+        ),
+        (png_format(), png_bytes(&frame)),
+    ])
 }
 
 fn temp_copy_name(hash: &str, ext: &str) -> String {
-    format!("{}.{}", hash.chars().take(8).collect::<String>(), ext.to_ascii_lowercase())
+    format!(
+        "{}.{}",
+        hash.chars().take(8).collect::<String>(),
+        ext.to_ascii_lowercase()
+    )
 }
 
 #[cfg(test)]
@@ -333,8 +422,8 @@ fn png_bytes(frame: &image::DynamicImage) -> Vec<u8> {
 
 #[cfg(windows)]
 fn png_format() -> u32 {
-    smartcopy::registered_format(windows::core::w!("PNG"))
-        .unwrap_or(smartcopy::CF_DIB) // 注册失败时占用一个无害值，数据仍以 DIB 为准
+    smartcopy::registered_format(windows::core::w!("PNG")).unwrap_or(smartcopy::CF_DIB)
+    // 注册失败时占用一个无害值，数据仍以 DIB 为准
 }
 
 #[cfg(not(windows))]
@@ -510,7 +599,9 @@ fn dir_size(dir: &std::path::Path) -> u64 {
 #[tauri::command]
 pub fn get_storage_info(state: State<'_, AppState>) -> Result<StorageInfo, String> {
     let root = state.library_root_clone();
-    let db_bytes = std::fs::metadata(root.join("library.db")).map(|m| m.len()).unwrap_or(0);
+    let db_bytes = std::fs::metadata(root.join("library.db"))
+        .map(|m| m.len())
+        .unwrap_or(0);
     let cache_bytes = dir_size(&thumbs::cache_dir(&root));
     Ok(StorageInfo {
         library_root: root.to_string_lossy().to_string(),

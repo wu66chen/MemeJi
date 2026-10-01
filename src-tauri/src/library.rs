@@ -1,8 +1,8 @@
-﻿//! Managed Library: 导入、内容去重、目录登记。
+//! Managed Library: 导入、内容去重、目录登记。
 //!
 //! Seam：`open_db` / `import_paths` / `list_memes` / `list_collections`。
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -137,13 +137,44 @@ pub fn import_paths(
     library_root: &Path,
     paths: &[PathBuf],
 ) -> rusqlite::Result<ImportResult> {
-    let mut result =
-        ImportResult { imported: 0, skipped: 0, unsupported: 0, failed: 0, content_hashes: Vec::new() };
+    import_paths_into(conn, library_root, paths, None)
+}
+
+pub fn import_paths_into(
+    conn: &Connection,
+    library_root: &Path,
+    paths: &[PathBuf],
+    target_collection_id: Option<i64>,
+) -> rusqlite::Result<ImportResult> {
+    if let Some(cid) = target_collection_id {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection WHERE id = ?1)",
+            params![cid],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+    }
+    let mut result = ImportResult {
+        imported: 0,
+        skipped: 0,
+        unsupported: 0,
+        failed: 0,
+        content_hashes: Vec::new(),
+    };
     for path in paths {
         if path.is_dir() {
-            import_directory(conn, library_root, path, &mut result)?;
+            import_directory(conn, library_root, path, target_collection_id, &mut result)?;
         } else {
-            import_file(conn, library_root, path, None, &mut result);
+            import_file_to(
+                conn,
+                library_root,
+                path,
+                None,
+                target_collection_id,
+                &mut result,
+            );
         }
     }
     Ok(result)
@@ -153,6 +184,7 @@ fn import_directory(
     conn: &Connection,
     library_root: &Path,
     dir: &Path,
+    target_collection_id: Option<i64>,
     result: &mut ImportResult,
 ) -> rusqlite::Result<()> {
     let entries = match std::fs::read_dir(dir) {
@@ -171,17 +203,35 @@ fn import_directory(
     }
     // 一级子文件夹 → 收藏夹（递归扫描其中的图片）
     for sub in subdirs {
-        let name = sub.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = sub
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let collection_id = ensure_collection(conn, &name)?;
         let files = collect_files(&sub);
         for file in files {
-            import_file(conn, library_root, &file, Some(collection_id), result);
+            import_file_to(
+                conn,
+                library_root,
+                &file,
+                Some(collection_id),
+                target_collection_id,
+                result,
+            );
         }
     }
     // 目录直属文件（不含子目录内容）
     let files = collect_files(dir);
     for file in files {
-        import_file(conn, library_root, &file, None, result);
+        import_file_to(
+            conn,
+            library_root,
+            &file,
+            None,
+            target_collection_id,
+            result,
+        );
     }
     Ok(())
 }
@@ -202,7 +252,11 @@ fn collect_files(dir: &Path) -> Vec<PathBuf> {
 
 fn ensure_collection(conn: &Connection, name: &str) -> rusqlite::Result<i64> {
     let existing: Option<i64> = conn
-        .query_row("SELECT id FROM collection WHERE name = ?1", params![name], |r| r.get(0))
+        .query_row(
+            "SELECT id FROM collection WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )
         .ok();
     if let Some(id) = existing {
         return Ok(id);
@@ -221,6 +275,17 @@ pub(crate) fn import_file(
     collection_id: Option<i64>,
     result: &mut ImportResult,
 ) {
+    import_file_to(conn, library_root, path, collection_id, None, result);
+}
+
+fn import_file_to(
+    conn: &Connection,
+    library_root: &Path,
+    path: &Path,
+    collection_id: Option<i64>,
+    target_collection_id: Option<i64>,
+    result: &mut ImportResult,
+) {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -234,20 +299,23 @@ pub(crate) fn import_file(
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let hash = format!("{:x}", hasher.finalize());
-        let exists: bool = conn
+        let existing_id: Option<i64> = conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM meme WHERE content_hash = ?1)",
+                "SELECT id FROM meme WHERE content_hash = ?1",
                 params![&hash],
                 |r| r.get(0),
             )
-            .unwrap_or(false);
-        if exists {
+            .optional()?;
+        if let Some(meme_id) = existing_id {
+            attach_import_memberships(conn, meme_id, collection_id, target_collection_id)?;
             return Err(DupError.into());
         }
         let reader = image::ImageReader::new(Cursor::new(&bytes))
             .with_guessed_format()
             .map_err(std::io::Error::other)?;
-        let format = reader.format().ok_or(std::io::Error::other("未知图片格式"))?;
+        let format = reader
+            .format()
+            .ok_or(std::io::Error::other("未知图片格式"))?;
         let (width, height) = reader.into_dimensions().map_err(std::io::Error::other)?;
         let mime = match format {
             image::ImageFormat::Png => "image/png",
@@ -284,12 +352,7 @@ pub(crate) fn import_file(
             ],
         )?;
         let meme_id = conn.last_insert_rowid();
-        if let Some(cid) = collection_id {
-            conn.execute(
-                "INSERT OR IGNORE INTO meme_collection (meme_id, collection_id) VALUES (?1, ?2)",
-                params![meme_id, cid],
-            )?;
-        }
+        attach_import_memberships(conn, meme_id, collection_id, target_collection_id)?;
         Ok(hash)
     })();
     match outcome {
@@ -300,6 +363,21 @@ pub(crate) fn import_file(
         Err(e) if e.is::<DupError>() => result.skipped += 1,
         Err(_) => result.failed += 1,
     }
+}
+
+fn attach_import_memberships(
+    conn: &Connection,
+    meme_id: i64,
+    folder_id: Option<i64>,
+    target_id: Option<i64>,
+) -> rusqlite::Result<()> {
+    for cid in [folder_id, target_id].into_iter().flatten() {
+        conn.execute(
+            "INSERT OR IGNORE INTO meme_collection (meme_id, collection_id) VALUES (?1, ?2)",
+            params![meme_id, cid],
+        )?;
+    }
+    Ok(())
 }
 
 struct DupError;
@@ -323,6 +401,7 @@ pub enum GalleryView {
     Favorites,
     Recent,
     Collection(i64),
+    Collections(Vec<i64>),
 }
 
 const MEME_SELECT: &str = "SELECT m.id, m.internal_path, m.original_filename, m.extension, m.mime_type, m.width, m.height, m.file_size, m.content_hash, m.description, m.is_favorite, m.last_used_at,
@@ -358,20 +437,27 @@ pub fn list_memes(conn: &Connection, view: &GalleryView) -> rusqlite::Result<Vec
         GalleryView::All => {
             let sql = format!("{MEME_SELECT} ORDER BY m.id");
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], map_meme_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = stmt
+                .query_map([], map_meme_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         }
         GalleryView::Favorites => {
             let sql = format!("{MEME_SELECT} WHERE m.is_favorite = 1 ORDER BY m.id");
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], map_meme_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = stmt
+                .query_map([], map_meme_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         }
         GalleryView::Recent => {
-            let sql =
-                format!("{MEME_SELECT} WHERE m.last_used_at IS NOT NULL ORDER BY m.last_used_at DESC");
+            let sql = format!(
+                "{MEME_SELECT} WHERE m.last_used_at IS NOT NULL ORDER BY m.last_used_at DESC"
+            );
             let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], map_meme_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = stmt
+                .query_map([], map_meme_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         }
         GalleryView::Collection(cid) => {
@@ -380,8 +466,26 @@ pub fn list_memes(conn: &Connection, view: &GalleryView) -> rusqlite::Result<Vec
                  WHERE mc.collection_id = ?1 ORDER BY m.id"
             );
             let mut stmt = conn.prepare(&sql)?;
-            let rows =
-                stmt.query_map(params![cid], map_meme_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = stmt
+                .query_map(params![cid], map_meme_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        }
+        GalleryView::Collections(ids) => {
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders = (1..=ids.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "{MEME_SELECT} WHERE EXISTS (SELECT 1 FROM meme_collection mc WHERE mc.meme_id = m.id AND mc.collection_id IN ({placeholders})) ORDER BY m.id"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(ids.iter()), map_meme_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         }
     };
@@ -390,7 +494,9 @@ pub fn list_memes(conn: &Connection, view: &GalleryView) -> rusqlite::Result<Vec
 
 /// LIKE 通配符转义：用户输入一律按字面量子串匹配。
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// 搜索：LIKE 子串起步（spec 决策，FTS5 留作演进）。
@@ -427,11 +533,27 @@ pub fn search_memes(
             args.push(cid.to_string());
             "m.id"
         }
+        GalleryView::Collections(ids) => {
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders = ids
+                .iter()
+                .map(|id| {
+                    args.push(id.to_string());
+                    format!("?{}", args.len())
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            clauses.push(format!(
+                "EXISTS (SELECT 1 FROM meme_collection mc WHERE mc.meme_id = m.id AND mc.collection_id IN ({placeholders}))"
+            ));
+            "m.id"
+        }
     };
     for keyword in keywords {
         let pattern = format!("%{}%", escape_like(keyword));
-        let (p_name, p_desc, p_tag) =
-            (args.len() + 1, args.len() + 2, args.len() + 3);
+        let (p_name, p_desc, p_tag) = (args.len() + 1, args.len() + 2, args.len() + 3);
         args.push(pattern.clone());
         args.push(pattern.clone());
         args.push(pattern);
@@ -489,31 +611,48 @@ pub fn find_meme_file(
 }
 
 pub fn list_collections(conn: &Connection) -> rusqlite::Result<Vec<Collection>> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, sort_order, group_id FROM collection ORDER BY sort_order, id")?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, sort_order, group_id FROM collection ORDER BY sort_order, id")?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(Collection { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)?, group_id: r.get(3)? })
+            Ok(Collection {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                sort_order: r.get(2)?,
+                group_id: r.get(3)?,
+            })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 
 pub fn list_collection_groups(conn: &Connection) -> rusqlite::Result<Vec<CollectionGroup>> {
-    let mut stmt = conn.prepare("SELECT id, name, sort_order FROM collection_group ORDER BY sort_order, id")?;
-    let groups = stmt.query_map([], |r| Ok(CollectionGroup { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)? }))?
+    let mut stmt =
+        conn.prepare("SELECT id, name, sort_order FROM collection_group ORDER BY sort_order, id")?;
+    let groups = stmt
+        .query_map([], |r| {
+            Ok(CollectionGroup {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                sort_order: r.get(2)?,
+            })
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(groups)
 }
 
 /// 读库内元数据（官方包版本等随库状态；换库/删库后自然回到未安装态）。
 pub fn get_meta(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", params![key], |r| r.get(0))
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })
+    conn.query_row(
+        "SELECT value FROM app_meta WHERE key = ?1",
+        params![key],
+        |r| r.get(0),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })
 }
 
 /// 写库内元数据（UPSERT）。
@@ -565,9 +704,19 @@ mod tests {
         let upgraded = open_db(tmp.path()).unwrap();
         let collection = &list_collections(&upgraded).unwrap()[0];
         assert_eq!((collection.id, collection.group_id), (42, None));
-        assert_eq!(list_memes(&upgraded, &GalleryView::Collection(42)).unwrap().len(), 1);
+        assert_eq!(
+            list_memes(&upgraded, &GalleryView::Collection(42))
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(list_collection_groups(&upgraded).unwrap().is_empty());
-        assert_eq!(upgraded.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+        assert_eq!(
+            upgraded
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
 
     fn png_bytes(seed: u8) -> Vec<u8> {
@@ -604,10 +753,20 @@ mod tests {
 
         assert_eq!(
             r,
-            ImportResult { imported: 1, skipped: 0, unsupported: 0, failed: 0, content_hashes: vec![list_memes(&conn, &GalleryView::All).unwrap()[0].content_hash.clone()] }
+            ImportResult {
+                imported: 1,
+                skipped: 0,
+                unsupported: 0,
+                failed: 0,
+                content_hashes: vec![list_memes(&conn, &GalleryView::All).unwrap()[0]
+                    .content_hash
+                    .clone()]
+            }
         );
         let files: Vec<_> = fs::read_dir(&lib).unwrap().flatten().collect();
-        assert!(files.iter().any(|f| f.path().extension().is_some_and(|e| e == "png")));
+        assert!(files
+            .iter()
+            .any(|f| f.path().extension().is_some_and(|e| e == "png")));
         let memes = list_memes(&conn, &GalleryView::All).unwrap();
         assert_eq!(memes.len(), 1);
         assert_eq!(memes[0].original_filename, "cat.png");
@@ -624,8 +783,90 @@ mod tests {
         import_paths(&conn, &lib, &[a]).unwrap();
         let r = import_paths(&conn, &lib, &[b]).unwrap();
 
-        assert_eq!(r, ImportResult { imported: 0, skipped: 1, unsupported: 0, failed: 0, content_hashes: Vec::new() });
+        assert_eq!(
+            r,
+            ImportResult {
+                imported: 0,
+                skipped: 1,
+                unsupported: 0,
+                failed: 0,
+                content_hashes: Vec::new()
+            }
+        );
         assert_eq!(list_memes(&conn, &GalleryView::All).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn import_into_current_collection_attaches_new_and_existing_images() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = tmp.path().join("lib");
+        let conn = open_db(&lib).unwrap();
+        conn.execute(
+            "INSERT INTO collection (name, created_at) VALUES ('目标', 0)",
+            [],
+        )
+        .unwrap();
+        let target = conn.last_insert_rowid();
+        let existing = write_file(tmp.path(), "existing.png", &png_bytes(11));
+        let fresh = write_file(tmp.path(), "fresh.png", &png_bytes(12));
+        import_paths(&conn, &lib, &[existing.clone()]).unwrap();
+        let result = import_paths_into(&conn, &lib, &[existing, fresh], Some(target)).unwrap();
+        assert_eq!((result.imported, result.skipped, result.failed), (1, 1, 0));
+        assert_eq!(
+            list_memes(&conn, &GalleryView::Collection(target))
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(list_memes(&conn, &GalleryView::All).unwrap().len(), 2);
+        let folder = tmp.path().join("folder");
+        fs::create_dir_all(folder.join("子目录")).unwrap();
+        write_file(&folder, "root.png", &png_bytes(13));
+        write_file(&folder.join("子目录"), "child.png", &png_bytes(14));
+        let folder_result = import_paths_into(&conn, &lib, &[folder], Some(target)).unwrap();
+        assert_eq!(folder_result.imported, 2);
+        assert_eq!(
+            list_memes(&conn, &GalleryView::Collection(target))
+                .unwrap()
+                .len(),
+            4
+        );
+        let child = list_collections(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "子目录")
+            .unwrap();
+        assert_eq!(
+            list_memes(&conn, &GalleryView::Collection(child.id))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(import_paths_into(&conn, &lib, &[], Some(target + 999)).is_err());
+    }
+
+    #[test]
+    fn multiple_collection_search_uses_union_without_duplicates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = tmp.path().join("lib");
+        let conn = open_db(&lib).unwrap();
+        conn.execute(
+            "INSERT INTO collection (name, created_at) VALUES ('一', 0), ('二', 0)",
+            [],
+        )
+        .unwrap();
+        let first = list_collections(&conn).unwrap()[0].id;
+        let second = list_collections(&conn).unwrap()[1].id;
+        let a = write_file(tmp.path(), "cat.png", &png_bytes(21));
+        let b = write_file(tmp.path(), "dog.png", &png_bytes(22));
+        import_paths_into(&conn, &lib, &[a.clone()], Some(first)).unwrap();
+        import_paths_into(&conn, &lib, &[a, b], Some(second)).unwrap();
+        let view = GalleryView::Collections(vec![first, second]);
+        assert_eq!(list_memes(&conn, &view).unwrap().len(), 2);
+        assert_eq!(search_memes(&conn, &view, "cat").unwrap().len(), 1);
+        assert!(list_memes(&conn, &GalleryView::Collections(vec![]))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -668,8 +909,22 @@ mod tests {
 
         let r = import_paths(&conn, &lib, &[bad, good]).unwrap();
 
-        assert_eq!(r, ImportResult { imported: 1, skipped: 0, unsupported: 0, failed: 1, content_hashes: vec![list_memes(&conn, &GalleryView::All).unwrap()[0].content_hash.clone()] });
-        assert_eq!(list_memes(&conn, &GalleryView::All).unwrap()[0].original_filename, "good.png");
+        assert_eq!(
+            r,
+            ImportResult {
+                imported: 1,
+                skipped: 0,
+                unsupported: 0,
+                failed: 1,
+                content_hashes: vec![list_memes(&conn, &GalleryView::All).unwrap()[0]
+                    .content_hash
+                    .clone()]
+            }
+        );
+        assert_eq!(
+            list_memes(&conn, &GalleryView::All).unwrap()[0].original_filename,
+            "good.png"
+        );
     }
 
     // ---- 搜索（票 05）----
@@ -698,7 +953,14 @@ mod tests {
         }
         conn.execute_batch("COMMIT").unwrap();
 
-        let queries = ["猫", "无语", "表情包文件123", "猫 无语", "456 描述", "不存在的词"];
+        let queries = [
+            "猫",
+            "无语",
+            "表情包文件123",
+            "猫 无语",
+            "456 描述",
+            "不存在的词",
+        ];
         let mut durations = Vec::new();
         for q in queries.iter().cycle().take(100) {
             let start = Instant::now();
@@ -708,7 +970,10 @@ mod tests {
         }
         durations.sort();
         let p99 = durations[(durations.len() as f64 * 0.99) as usize - 1];
-        println!("10k 库搜索 p99: {p99:?}（max {:?}）", durations[durations.len() - 1]);
+        println!(
+            "10k 库搜索 p99: {p99:?}（max {:?}）",
+            durations[durations.len() - 1]
+        );
         let budget = if cfg!(debug_assertions) {
             Duration::from_millis(500)
         } else {
@@ -802,7 +1067,10 @@ mod tests {
         crate::organize::set_favorite(&conn, b, true).unwrap();
 
         // c 也叫 *.png，但不在「组」里 → 收藏夹内搜索只出 a、b
-        assert_eq!(search_ids(&conn, &GalleryView::Collection(col.id), "png"), vec![a, b]);
+        assert_eq!(
+            search_ids(&conn, &GalleryView::Collection(col.id), "png"),
+            vec![a, b]
+        );
         // 收藏视图内搜索只出 b
         assert_eq!(search_ids(&conn, &GalleryView::Favorites, "png"), vec![b]);
     }

@@ -15,6 +15,8 @@
   let src = $state<string | null>(null);
   let requested = false;
   let hovered = $state(false);
+  let hoveredOnce = $state(false);
+  let originalLoaded = $state(false);
   let cell: HTMLDivElement | undefined = $state();
 
   function ensureRequested() {
@@ -56,15 +58,17 @@
 <div
   bind:this={cell}
   role="presentation"
-  onmouseenter={() => (hovered = true)}
+  onmouseenter={() => { hovered = true; hoveredOnce = true; }}
   onmouseleave={() => (hovered = false)}
-  class="aspect-square w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800"
+  class="relative aspect-square w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800"
 >
-  {#if hoverPlay && internalPath && hovered}
-    <img draggable="false" src={convertFileSrc(internalPath)} class="h-full w-full object-contain" alt="" />
-  {:else if src}
+  {#if src}
     <img draggable="false" {src} class="h-full w-full object-contain" alt="" />
   {:else}
     <div class="h-full w-full animate-pulse bg-neutral-200 dark:bg-neutral-700"></div>
+  {/if}
+  {#if hoverPlay && internalPath && hoveredOnce}
+    <img draggable="false" src={convertFileSrc(internalPath)} onload={() => (originalLoaded = true)}
+      class={`absolute inset-0 h-full w-full object-contain transition-opacity duration-75 ${hovered && originalLoaded ? 'opacity-100' : 'opacity-0'}`} alt="" />
   {/if}
 </div>

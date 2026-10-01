@@ -14,7 +14,3 @@ export function selectIds(visible: number[], selected: number[], anchor: number 
     anchor: clicked,
   };
 }
-
-export function sourceCollectionId(view: { kind: string; id?: number }, query: string, globalSearch: boolean): number | null {
-  return view.kind === 'collection' && !(query.trim() && globalSearch) ? view.id ?? null : null;
-}

@@ -27,55 +27,34 @@
     disabled?: boolean;
     meme: Meme | null;
     allTags: Tag[];
-    collections: Collection[];
     memberOf: Collection[];
-    onToggleFavorite: () => Promise<void>;
     onSaveDescription: (text: string) => Promise<void>;
     onAddTag: (name: string) => Promise<void>;
     onRemoveTag: (tagId: number) => Promise<void>;
-    onAddToCollection: (collectionId: number) => Promise<void>;
     onRemoveFromCollection: (collectionId: number) => Promise<void>;
-    onDelete: () => Promise<void>;
   }
 
   let {
     disabled = false,
     meme,
     allTags,
-    collections,
     memberOf,
-    onToggleFavorite,
     onSaveDescription,
     onAddTag,
     onRemoveTag,
-    onAddToCollection,
     onRemoveFromCollection,
-    onDelete,
   }: Props = $props();
 
   let description = $state("");
   let descriptionDirty = $state(false);
   let tagInput = $state("");
-  let collectionToJoin = $state<string>("");
 
   // 切换选中图片时重置编辑态
   $effect(() => {
     description = meme?.description ?? "";
     descriptionDirty = false;
     tagInput = "";
-    collectionToJoin = "";
   });
-
-  const joinable = $derived(
-    collections.filter((c) => !memberOf.some((m) => m.id === c.id))
-  );
-
-  function joinCollection() {
-    const id = Number(collectionToJoin);
-    if (!id || !meme) return;
-    collectionToJoin = "";
-    void onAddToCollection(id).catch((e) => alert(String(e)));
-  }
 
   function submitTag() {
     const name = tagInput.trim();
@@ -100,18 +79,9 @@
       class="mb-3 max-h-44 w-full rounded border border-neutral-200 bg-neutral-100 object-contain dark:border-neutral-700 dark:bg-neutral-800"
     />
 
-    <div class="mb-3 flex items-center justify-between">
+    <div class="mb-3 flex items-center justify-between gap-2">
       <span class="truncate text-xs text-neutral-500" title={meme.original_filename}>{meme.original_filename}</span>
-      <button
-        class={`rounded px-2 py-0.5 text-xs ${
-          meme.is_favorite
-            ? "bg-amber-500 text-white hover:bg-amber-600"
-            : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-600"
-        }`}
-        onclick={() => void onToggleFavorite().catch((e) => alert(String(e)))}
-      >
-        {meme.is_favorite ? "★ 已收藏" : "☆ 收藏"}
-      </button>
+      {#if meme.is_favorite}<span class="text-xs text-amber-600" aria-label="已收藏">★</span>{/if}
     </div>
 
     <dl class="mb-3 space-y-1 text-xs text-neutral-500">
@@ -172,29 +142,6 @@
         <span class="text-xs text-neutral-400">未加入</span>
       {/if}
     </div>
-    <form
-      class="mb-3 flex gap-1"
-      onsubmit={(e) => {
-        e.preventDefault();
-        joinCollection();
-      }}
-    >
-      <select
-        bind:value={collectionToJoin}
-        class="min-w-0 flex-1 rounded border border-neutral-300 bg-white px-1.5 py-1 text-xs outline-none dark:border-neutral-600 dark:bg-neutral-900"
-      >
-        <option value="">选择收藏夹…</option>
-        {#each joinable as c (c.id)}
-          <option value={c.id}>{c.name}</option>
-        {/each}
-      </select>
-      <button
-        type="submit"
-        disabled={!collectionToJoin}
-        class="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-white disabled:opacity-40 dark:bg-neutral-700"
-      >加入</button>
-    </form>
-
     <p class="mb-1 text-xs text-neutral-500">描述</p>
     <textarea
       bind:value={description}
@@ -222,12 +169,6 @@
       </div>
     {/if}
 
-    <button
-      class="mt-2 w-full rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950"
-      onclick={() => void onDelete().catch((e) => alert(String(e)))}
-    >
-      删除这张表情
-    </button>
   {:else}
     <p class="text-xs text-neutral-400">点击中间的图片查看与编辑详情</p>
   {/if}

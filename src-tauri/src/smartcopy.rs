@@ -4,7 +4,7 @@
 //! `copy_with_strategy`（仅 Windows；macOS 通道随打包票落地）。
 //!
 //! 策略（位图通道天然单帧，文件引用是唯一保动画通道）：
-//! - 静态图：CF_DIB + CF_DIBV5 + PNG 流，聊天软件直接粘贴为图片
+//! - 静态图：CF_HDROP 临时副本 + CF_DIB/CF_DIBV5/PNG，让不同聊天软件选择可接受格式
 //! - 动图：CF_HDROP 指向临时副本 + 首帧 CF_DIB/CF_DIBV5/PNG 兜底只读位图的应用
 //! - 临时文件：下次复制清上一批 + 应用退出全清（`TempStore`，单测覆盖）
 
@@ -23,7 +23,10 @@ pub struct TempStore {
 
 impl TempStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        TempStore { dir: dir.into(), live: Vec::new() }
+        TempStore {
+            dir: dir.into(),
+            live: Vec::new(),
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -103,7 +106,7 @@ pub fn dib_from_rgba(rgba: &[u8], width: i32, height: i32) -> Vec<u8> {
     buf.extend_from_slice(&0u32.to_le_bytes()); // biYPelsPerMeter
     buf.extend_from_slice(&0u32.to_le_bytes()); // biClrUsed
     buf.extend_from_slice(&0u32.to_le_bytes()); // biClrImportant
-    // 像素：自底向上逐行，RGBA → BGRA
+                                                // 像素：自底向上逐行，RGBA → BGRA
     let w = width as usize;
     for row in (0..height as usize).rev() {
         for px in rgba[row * w * 4..(row + 1) * w * 4].chunks_exact(4) {
@@ -270,7 +273,7 @@ mod tests {
         assert_eq!(&dib[8..12], &2i32.to_le_bytes()); // biHeight（正 → bottom-up）
         assert_eq!(&dib[12..14], &1u16.to_le_bytes()); // biPlanes
         assert_eq!(&dib[14..16], &32u16.to_le_bytes()); // biBitCount
-        // 第一像素是图像「最后一行」→ 绿色 BGRA
+                                                        // 第一像素是图像「最后一行」→ 绿色 BGRA
         assert_eq!(&dib[40..44], &[0u8, 255, 0, 255]);
         // 第二像素是顶行红色 BGRA
         assert_eq!(&dib[44..48], &[0u8, 0, 255, 255]);
