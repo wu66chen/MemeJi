@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Icon from './Icon.svelte';
   interface Collection { id: number; name: string; group_id: number | null }
   interface Group { id: number; name: string }
   let { collections, groups, count, sourceId, mode, busy, error, onChoose, onClose }: {
@@ -18,28 +19,41 @@
 </script>
 
 <dialog bind:this={dialog} aria-labelledby="transfer-title" oncancel={(e) => { if (busy) e.preventDefault(); }} onclose={onClose}
-  class="m-auto max-h-[80vh] w-[min(440px,90vw)] rounded-xl border border-neutral-200 bg-white p-5 text-neutral-900 shadow-xl dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100">
-  <div class="mb-2 flex items-center justify-between gap-3">
-    <h2 id="transfer-title" class="font-semibold">{mode === 'move' ? '移动到收藏夹' : '加入收藏夹'} · {count} 张</h2>
-    <button class="rounded px-2 py-1 text-sm disabled:opacity-40" disabled={busy} onclick={onClose}>取消</button>
+  class="ui-dialog transfer-dialog">
+  <div class="ui-dialog-header">
+    <div><h2 id="transfer-title">{mode === 'move' ? '移动到收藏夹' : '加入收藏夹'}</h2><p class="ui-muted">已选 {count} 张</p></div>
+    <button type="button" class="icon-button round" aria-label="关闭" disabled={busy} onclick={onClose}><Icon name="x" size={16}/></button>
   </div>
-  <p class="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
-    {mode === 'move' ? `从「${source}」移出，保留其他收藏夹归属。点击目标即可移动。` : '保留已有归属。点击目标即可加入，不会重复添加。'}
-  </p>
-  <input aria-label="搜索目标收藏夹" bind:value={search} disabled={busy} placeholder="搜索收藏夹或分组…"
-    class="mb-3 w-full rounded border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-600" />
-  {#if error}<p class="mb-2 text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>{/if}
-  <div class="max-h-[45vh] overflow-y-auto space-y-1" aria-busy={busy}>
+  <div class="ui-dialog-body">
+  {#if mode === 'move'}<p class="transfer-explainer">从「{source}」移出，其他收藏夹的归属会保留。</p>{/if}
+  <div class="transfer-search"><Icon name="search" size={16}/><input aria-label="搜索目标收藏夹" bind:value={search} disabled={busy} placeholder="搜索收藏夹或分组" /></div>
+  {#if error}<p class="transfer-error" role="alert">{error}</p>{/if}
+  <div class="transfer-list" aria-busy={busy}>
     {#each targets as c (c.id)}
-      <button disabled={busy} class="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 text-left hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onclick={() => onChoose(c.id)}>
-        <span class="min-w-0 truncate" title={c.name}>{c.name}</span>
-        <span class="max-w-[40%] truncate text-xs text-neutral-500">{groups.find(g => g.id === c.group_id)?.name ?? '未分组'}</span>
+      <button disabled={busy} class="transfer-target" onclick={() => onChoose(c.id)}><Icon name="folder" size={17}/>
+        <span class="transfer-name" title={c.name}>{c.name}</span>
+        <span class="transfer-group">{groups.find(g => g.id === c.group_id)?.name ?? '未分组'}</span>
       </button>
     {:else}
-      <p class="py-6 text-center text-sm text-neutral-500">{collections.length === 0 ? '还没有收藏夹，请先在左侧新建。' : '没有可用的目标收藏夹'}</p>
+      <div class="ui-empty"><p>{collections.length === 0 ? '还没有收藏夹，请先在左侧新建。' : '没有可用的目标收藏夹'}</p></div>
     {/each}
   </div>
-  {#if busy}<p class="mt-3 text-sm" role="status">正在处理…</p>{/if}
+  {#if busy}<p class="transfer-status" role="status">正在处理…</p>{/if}
+  </div>
 </dialog>
 
-<style>dialog::backdrop { background: rgb(0 0 0 / 0.5); }</style>
+<style>
+  .transfer-dialog { width: min(460px,calc(100vw - 30px)); max-width: none; max-height: calc(100vh - 30px); margin: auto; padding: 0; }
+  .transfer-dialog .ui-dialog-header p { font-size: 12px; margin-top: 2px; }
+  .transfer-explainer { color: var(--muted); font-size: 12px; margin-bottom: 11px; }
+  .transfer-search { display: flex; align-items: center; gap: 9px; height: 35px; padding: 0 10px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); color: var(--faint); }
+  .transfer-search:focus-within { border-color: var(--accent); }
+  .transfer-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); }
+  .transfer-list { max-height: 45vh; min-height: 90px; overflow-y: auto; }
+  .transfer-target { display: flex; width: 100%; min-height: 41px; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; text-align: left; color: var(--muted); }
+  .transfer-target:hover { background: var(--hover); color: var(--text); }
+  .transfer-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .transfer-group { max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
+  .transfer-error { color: var(--danger); background: var(--danger-soft); padding: 8px 10px; border-radius: 7px; font-size: 12px; margin-bottom: 10px; }
+  .transfer-status { margin-top: 9px; color: var(--muted); font-size: 12px; }
+</style>

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { onMount } from 'svelte';
   import HotkeyRecorder from "./HotkeyRecorder.svelte";
+  import Icon from './Icon.svelte';
 
   interface Props {
     onFinish: () => void;
@@ -12,6 +14,9 @@
   let libraryPath = $state("");
   let pendingHotkey = $state<string | null>(null);
   let importSummary = $state("");
+  let error = $state('');
+  let dialogEl: HTMLDialogElement | undefined = $state();
+  onMount(() => { dialogEl?.showModal(); });
 
   interface ImportResult {
     imported: number;
@@ -35,7 +40,7 @@
     try {
       await invoke("set_library_root", { path: picked });
     } catch (e) {
-      alert(String(e));
+      error = String(e);
     }
   }
 
@@ -47,7 +52,7 @@
       const r = await invoke<ImportResult>("import_paths", { paths });
       importSummary = `导入 ${r.imported} · 重复 ${r.skipped} · 不支持 ${r.unsupported} · 失败 ${r.failed}`;
     } catch (e) {
-      alert(String(e));
+      error = String(e);
     }
   }
 
@@ -58,7 +63,7 @@
       const r = await invoke<ImportResult>("import_paths", { paths: [picked] });
       importSummary = `导入 ${r.imported} · 重复 ${r.skipped} · 不支持 ${r.unsupported} · 失败 ${r.failed}`;
     } catch (e) {
-      alert(String(e));
+      error = String(e);
     }
   }
 
@@ -67,7 +72,7 @@
       await invoke("complete_onboarding", { hotkey: pendingHotkey ?? defaultHotkey(), theme: "system" });
       onFinish();
     } catch (e) {
-      alert(String(e));
+      error = String(e);
     }
   }
 
@@ -78,75 +83,50 @@
   const stepTitles = ["创建表情库", "导入表情（可跳过）", "设置呼出快捷键"];
 </script>
 
-<div class="fixed inset-0 z-50 grid place-items-center bg-neutral-900/60 p-6">
-  <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl dark:bg-neutral-800">
-    <p class="text-xs text-neutral-400">第 {step} 步 / 共 3 步</p>
-    <h2 class="mb-4 text-lg font-semibold">{stepTitles[step - 1]}</h2>
-
+<dialog bind:this={dialogEl} class="ui-dialog onboarding-dialog" aria-label="欢迎使用 MemeJi" oncancel={(e) => e.preventDefault()}>
+  <div class="onboard-header"><img src="/memeji.png" alt=""/><div><p>欢迎使用 MemeJi</p><h2>{stepTitles[step - 1]}</h2></div></div>
+  <div class="onboard-progress" aria-label={`第 ${step} 步，共 3 步`}>{#each [1,2,3] as n}<span class:active={n <= step}></span>{/each}</div>
+  <div class="onboard-body">
     {#if step === 1}
-      <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
-        表情会复制进统一管理的库目录，原文件不受影响。默认位置如下，也可以换成别的文件夹。
-      </p>
-      <div class="mb-4 flex gap-2">
-        <input
-          readonly
-          value={libraryPath}
-          class="min-w-0 flex-1 rounded border border-neutral-300 bg-neutral-50 px-2 py-1.5 text-xs dark:border-neutral-600 dark:bg-neutral-900"
-        />
-        <button
-          type="button"
-          class="shrink-0 rounded bg-neutral-200 px-2 py-1.5 text-xs hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-          onclick={() => void chooseLibraryFolder()}
-        >选择…</button>
-      </div>
-      <button
-        type="button"
-        class="w-full rounded bg-neutral-800 py-2 text-sm text-white hover:bg-neutral-700 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-        onclick={() => (step = 2)}
-      >下一步</button>
+      <p>选择表情库的位置。导入时会复制图片，原文件保留在原处。</p>
+      <label class="ui-label" for="library-path">表情库位置</label>
+      <div class="onboard-field"><input id="library-path" readonly value={libraryPath} class="ui-input" /><button type="button" class="ui-button" onclick={() => void chooseLibraryFolder()}>选择文件夹</button></div>
     {:else if step === 2}
-      <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
-        把已有的表情包一次性搬进来。这一步也可以跳过，之后随时在主窗口导入。
-      </p>
-      <div class="mb-3 flex gap-2">
-        <button
-          type="button"
-          class="flex-1 rounded bg-neutral-200 py-2 text-sm hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-          onclick={() => void importFiles()}
-        >导入图片</button>
-        <button
-          type="button"
-          class="flex-1 rounded bg-neutral-200 py-2 text-sm hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-          onclick={() => void importFolder()}
-        >导入文件夹</button>
-      </div>
-      {#if importSummary}
-        <p class="mb-3 text-xs text-neutral-500">{importSummary}</p>
-      {/if}
-      <div class="flex gap-2">
-        <button
-          type="button"
-          class="flex-1 rounded py-2 text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
-          onclick={() => (step = 3)}
-        >跳过</button>
-        <button
-          type="button"
-          class="flex-1 rounded bg-neutral-800 py-2 text-sm text-white hover:bg-neutral-700 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-          onclick={() => (step = 3)}
-        >下一步</button>
-      </div>
+      <p>把已有的表情导入图库。之后也可以随时添加。</p>
+      <div class="onboard-imports"><button class="ui-button" onclick={() => void importFiles()}><Icon name="upload" size={18}/>导入图片</button><button class="ui-button" onclick={() => void importFolder()}><Icon name="folder-plus" size={18}/>导入文件夹</button></div>
+      {#if importSummary}<p class="onboard-status" role="status">{importSummary}</p>{/if}
     {:else}
-      <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
-        在任何应用里按这个组合键，就能在鼠标旁呼出表情选择器。
-      </p>
-      <div class="mb-4">
-        <HotkeyRecorder initialHotkey={defaultHotkey()} onChange={(accel) => (pendingHotkey = accel)} />
-      </div>
-      <button
-        type="button"
-        class="w-full rounded bg-neutral-800 py-2 text-sm text-white hover:bg-neutral-700 dark:bg-neutral-700 dark:hover:bg-neutral-600"
-        onclick={() => void finish()}
-      >完成</button>
+      <p>按快捷键，即可在当前窗口旁呼出 Quick Picker。</p>
+      <p class="ui-label">呼出快捷键</p>
+      <HotkeyRecorder initialHotkey={defaultHotkey()} onChange={(accel) => (pendingHotkey = accel)} />
     {/if}
+    {#if error}<p class="onboard-error" role="alert">{error}</p>{/if}
   </div>
-</div>
+  <div class="ui-dialog-footer">
+    {#if step > 1}<button class="ui-button ghost" onclick={() => { step -= 1; error=''; }}>上一步</button>{/if}
+    <span class="onboard-spacer"></span>
+    {#if step === 2}<button class="ui-button ghost" onclick={() => { step=3; error=''; }}>跳过</button>{/if}
+    {#if step < 3}<button class="ui-button primary" onclick={() => { step += 1; error=''; }}>下一步<Icon name="arrow-right" size={15}/></button>
+    {:else}<button class="ui-button primary" onclick={() => void finish()}>开始使用<Icon name="check" size={16}/></button>{/if}
+  </div>
+</dialog>
+
+<style>
+  .onboarding-dialog { width: min(520px, calc(100vw - 30px)); max-width: none; max-height: calc(100vh - 30px); margin: auto; padding: 0; }
+  .onboarding-dialog[open] { display: flex; flex-direction: column; }
+  .onboard-header { display: flex; align-items: center; gap: 13px; padding: 22px 24px 14px; }
+  .onboard-header img { width: 42px; height: 42px; object-fit: contain; }
+  .onboard-header p { color: var(--muted); font-size: 12px; }
+  .onboard-header h2 { font-size: 19px; font-weight: 650; line-height: 1.2; }
+  .onboard-progress { display: flex; gap: 5px; padding: 0 24px 18px; }
+  .onboard-progress span { height: 4px; flex: 1; border-radius: 6px; background: var(--border); }
+  .onboard-progress span.active { background: var(--accent); }
+  .onboard-body { min-height: 150px; overflow: auto; padding: 0 24px 20px; }
+  .onboard-body > p:first-child { color: var(--muted); margin-bottom: 20px; }
+  .onboard-field, .onboard-imports { display: flex; gap: 8px; margin-top: 8px; }
+  .onboard-field .ui-input { min-width: 0; flex: 1; }
+  .onboard-imports .ui-button { flex: 1; }
+  .onboard-status { margin-top: 15px; color: var(--accent-ink); font-size: 12px; }
+  .onboard-error { margin-top: 15px; padding: 8px 10px; background: var(--danger-soft); color: var(--danger); border-radius: 8px; font-size: 12px; }
+  .onboard-spacer { flex: 1; }
+</style>

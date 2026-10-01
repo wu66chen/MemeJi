@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import MemeThumb from "$lib/components/MemeThumb.svelte";
+  import Icon from "$lib/components/Icon.svelte";
 
   interface Meme {
     id: number;
@@ -39,6 +40,7 @@
   let collectionsLoading = $state(false);
   let collectionsError = $state(false);
   let selectedId = $state<number | null>(null);
+  let copyError = $state('');
   let searchInput: HTMLInputElement | undefined = $state();
   let scopeContainer: HTMLDivElement | undefined = $state();
   let gridEl: HTMLDivElement | undefined = $state();
@@ -71,6 +73,12 @@
     return v.kind === "collection" ? `collection:${v.id}` : v.kind;
   }
   const activeKey = $derived(viewKey(activeView));
+  const activeTitle = $derived.by(() => {
+    if (query.trim()) return '搜索结果';
+    const view = activeView;
+    if (view.kind === 'collection') return collections.find(c => c.id === view.id)?.name ?? '收藏夹';
+    return { all: '全部表情', favorites: '收藏', recent: '最近使用' }[view.kind];
+  });
   const scopeLabel = $derived(
     searchCollectionIds.length === 0
       ? "全部图库"
@@ -82,11 +90,9 @@
   async function loadMemes() {
     const id = ++requestId;
     const q = query.trim();
-    const view: View = q
-      ? searchCollectionIds.length === 0
-        ? { kind: "all" }
-        : { kind: "collections", id: [...searchCollectionIds] }
-      : activeView;
+    const view: View = searchCollectionIds.length
+      ? { kind: "collections", id: [...searchCollectionIds] }
+      : q ? { kind: "all" } : activeView;
     loading = true;
     loadError = false;
     selectedId = null;
@@ -127,6 +133,7 @@
   }
 
   function switchView(view: BrowseView) {
+    copyError = '';
     activeView = view;
     query = "";
     searchCollectionIds = view.kind === "collection" ? [view.id] : [];
@@ -212,8 +219,10 @@
     try {
       // Smart Copy：后端完成剪贴板写入 + 隐藏窗口 + 恢复焦点
       await invoke("smart_copy", { memeId: selectedId });
+      copyError = '';
     } catch (e) {
       console.error(e);
+      copyError = `复制失败：${String(e)}`;
     }
   }
 
@@ -231,6 +240,7 @@
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen("picker-shown", () => {
+      copyError = '';
       query = "";
       searchCollectionIds = [];
       scopeOpen = false;
@@ -254,134 +264,75 @@
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onWindowPointerDown} />
 
-<div class="flex h-screen overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
-  <aside class="w-36 shrink-0 overflow-y-auto border-r border-neutral-800 p-2 text-sm">
-    <p class="mb-1 px-1 text-xs text-neutral-500">收藏夹</p>
-    <ul class="space-y-0.5">
-      {#each viewItems.slice(0, 3) as item (item.key)}
-        <li>
-          <button
-            class={`w-full truncate rounded px-2 py-1 text-left ${
-              item.key === activeKey ? "bg-neutral-800" : "hover:bg-neutral-800/60"
-            }`}
-            title={item.label}
-            onclick={() => switchView(item.view)}
-          >
-            {item.label}
-          </button>
-        </li>
-      {/each}
-      {#each collections.filter((c) => c.group_id === null) as c (c.id)}
-        <li><button class={`w-full truncate rounded px-2 py-1 text-left ${activeKey === `collection:${c.id}` ? "bg-neutral-800" : "hover:bg-neutral-800/60"}`} title={c.name} onclick={() => switchView({ kind: "collection", id: c.id })}>{c.name}</button></li>
-      {/each}
-      {#each groups as g (g.id)}
-        <li class="mt-2 truncate px-2 pt-1 text-xs text-neutral-500" title={g.name}>{g.name}</li>
-        {#each collections.filter((c) => c.group_id === g.id) as c (c.id)}
-          <li><button class={`w-full truncate rounded py-1 pl-4 pr-2 text-left ${activeKey === `collection:${c.id}` ? "bg-neutral-800" : "hover:bg-neutral-800/60"}`} title={c.name} onclick={() => switchView({ kind: "collection", id: c.id })}>{c.name}</button></li>
-        {/each}
-      {/each}
-    </ul>
-  </aside>
-  <main class="flex flex-1 flex-col">
-    <div bind:this={gridEl} class="flex-1 overflow-y-auto p-2">
-      {#if loading}
-        <div class="grid h-full place-items-center text-xs text-neutral-500">正在加载…</div>
-      {:else if loadError}
-        <div class="grid h-full place-items-center text-xs text-red-400">
-          <button type="button" onclick={() => void loadMemes()}>加载失败，点击重试</button>
-        </div>
-      {:else if memes.length === 0}
-        <div class="grid h-full place-items-center text-xs text-neutral-600">
-          {query.trim() ? "没有匹配的表情" : "还没有表情，先去主窗口导入吧"}
-        </div>
-      {:else}
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5">
-          {#each memes as m (m.id)}
-            <button
-              id={`picker-cell-${m.id}`}
-              type="button"
-              class={`overflow-hidden rounded border bg-neutral-800 ${
-                m.id === selectedId
-                  ? "border-neutral-300 ring-1 ring-neutral-300"
-                  : "border-neutral-700"
-              }`}
-              title={m.original_filename}
-              onmouseenter={() => (selectedId = m.id)}
-              onclick={() => void copySelected()}
-            >
-              <MemeThumb
-                contentHash={m.content_hash}
-                thumbnailPath={m.thumbnail_path}
-                internalPath={m.internal_path}
-                hoverPlay
-              />
-            </button>
-          {/each}
+<div class="picker-shell">
+  <header class="picker-toolbar">
+    <div class="picker-search"><Icon name="search" size={17}/><input bind:this={searchInput} bind:value={query} aria-label="搜索表情" placeholder="搜索表情" oninput={() => void loadMemes()} /></div>
+    <div bind:this={scopeContainer} class="picker-scope-wrap">
+      <button type="button" class="ui-button picker-scope" title={`搜索范围：${scopeLabel}`} aria-label={`搜索范围：${scopeLabel}`} aria-expanded={scopeOpen} onclick={() => (scopeOpen = !scopeOpen)}><span class="truncate">{scopeLabel}</span><Icon name="chevron-down" size={14}/></button>
+      {#if scopeOpen}
+        <div class="ui-menu picker-scope-menu" role="group" aria-label="搜索范围">
+          <div class="scope-heading"><span>搜索范围</span><button type="button" onclick={clearSearchScope}>清除所有</button></div>
+          <div class="picker-scope-options">
+            {#if collectionsLoading}<p class="scope-empty">正在加载收藏夹…</p>
+            {:else if collectionsError}<button class="ui-menu-item danger" onclick={() => void loadCollections()}>加载失败，重试</button>
+            {:else}
+              {#each orderedCollections as c (c.id)}<label class="scope-option" title={c.name}><input class="ui-checkbox" type="checkbox" checked={searchCollectionIds.includes(c.id)} onchange={() => toggleSearchCollection(c.id)} /><span class="truncate">{c.name}</span></label>
+              {:else}<p class="scope-empty">暂无收藏夹</p>{/each}
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
-    <div class="flex items-center gap-2 border-t border-neutral-800 p-2">
-      <input
-        bind:this={searchInput}
-        bind:value={query}
-        oninput={(event) => {
-          query = event.currentTarget.value;
-          void loadMemes();
-        }}
-        placeholder="搜索文件名、标签、描述…"
-        aria-label="搜索表情"
-        class="min-w-0 flex-1 rounded bg-neutral-800 px-3 py-2 text-sm outline-none placeholder:text-neutral-500"
-      />
-      <div bind:this={scopeContainer} class="relative shrink-0">
-        <button
-          type="button"
-          class="max-w-32 truncate rounded bg-neutral-800 px-2 py-2 text-xs hover:bg-neutral-700"
-          title={`搜索范围：${scopeLabel}`}
-          aria-label={`搜索范围：${scopeLabel}`}
-          aria-expanded={scopeOpen}
-          onclick={() => (scopeOpen = !scopeOpen)}
-        >
-          {scopeLabel} ▾
-        </button>
-        {#if scopeOpen}
-          <div class="absolute bottom-full right-0 z-10 mb-2 w-48 rounded border border-neutral-700 bg-neutral-900 p-1.5 text-xs shadow-xl" role="group" aria-label="搜索范围">
-            <div class="flex items-center justify-between px-1 py-1 text-neutral-400">
-              <span>搜索范围</span>
-              {#if searchCollectionIds.length > 0}
-                <button type="button" class="hover:text-neutral-100" onclick={clearSearchScope}>清除所有</button>
-              {/if}
-            </div>
-            <button
-              type="button"
-              class={`w-full rounded px-2 py-1.5 text-left ${searchCollectionIds.length === 0 ? "bg-neutral-700 text-white" : "hover:bg-neutral-800"}`}
-              aria-pressed={searchCollectionIds.length === 0}
-              onclick={clearSearchScope}
-            >全部图库</button>
-            <div class="my-1 border-t border-neutral-700"></div>
-            <div class="max-h-52 overflow-y-auto">
-              {#if collectionsLoading}
-                <p class="px-2 py-1.5 text-neutral-500">正在加载收藏夹…</p>
-              {:else if collectionsError}
-                <button type="button" class="px-2 py-1.5 text-red-400" onclick={() => void loadCollections()}>加载失败，点击重试</button>
-              {:else if orderedCollections.length === 0}
-                <p class="px-2 py-1.5 text-neutral-500">暂无收藏夹</p>
-              {:else}
-                {#each orderedCollections as c (c.id)}
-                  <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-800" title={c.name}>
-                    <input
-                      type="checkbox"
-                      checked={searchCollectionIds.includes(c.id)}
-                      onchange={() => toggleSearchCollection(c.id)}
-                      class="accent-neutral-300"
-                    />
-                    <span class="truncate">{c.name}</span>
-                  </label>
-                {/each}
-              {/if}
-            </div>
-          </div>
-        {/if}
+    <button type="button" class="icon-button round" aria-label="关闭 Quick Picker" title="关闭" onclick={() => void invoke('hide_picker')}><Icon name="x" size={16}/></button>
+  </header>
+  <div class="picker-body">
+    <aside class="picker-sidebar"><div class="picker-side-label">图库</div>
+      {#each viewItems.slice(0, 3) as item (item.key)}
+        <button class={`picker-nav ${item.key === activeKey && searchCollectionIds.length < 2 ? 'active' : ''}`} title={item.label} onclick={() => switchView(item.view)}><Icon name={item.key === 'all' ? 'grid' : item.key === 'favorites' ? 'heart' : 'clock'} size={16}/><span class="truncate">{item.label}</span></button>
+      {/each}
+      <div class="picker-side-label collections-label">收藏夹</div>
+      {#each collections.filter((c) => c.group_id === null) as c (c.id)}<button class={`picker-nav ${activeKey === `collection:${c.id}` && searchCollectionIds.length === 1 ? 'active' : ''}`} title={c.name} onclick={() => switchView({ kind: 'collection', id: c.id })}><Icon name="folder" size={15}/><span class="truncate">{c.name}</span></button>{/each}
+      {#each groups as g (g.id)}<div class="picker-group" title={g.name}>{g.name}</div>{#each collections.filter((c) => c.group_id === g.id) as c (c.id)}<button class={`picker-nav nested ${activeKey === `collection:${c.id}` && searchCollectionIds.length === 1 ? 'active' : ''}`} title={c.name} onclick={() => switchView({ kind: 'collection', id: c.id })}><Icon name="folder" size={15}/><span class="truncate">{c.name}</span></button>{/each}{/each}
+    </aside>
+    <main class="picker-main">
+      <div class="picker-results-heading"><span>{activeTitle}</span><span class="ui-faint">{memes.length} 张</span></div>
+      <div bind:this={gridEl} class="picker-grid-scroll">
+        {#if loading}<div class="ui-empty"><p>正在加载…</p></div>
+        {:else if loadError}<div class="ui-empty"><div class="ui-empty-mark"><Icon name="alert" size={24}/></div><h2>加载失败</h2><button class="ui-button small" onclick={() => void loadMemes()}>重试</button></div>
+        {:else if memes.length === 0}<div class="ui-empty"><div class="ui-empty-mark"><Icon name={query.trim() ? 'search' : 'image'} size={25}/></div><h2>{query.trim() ? '没有找到表情' : activeView.kind === 'recent' ? '还没有使用记录' : activeView.kind === 'favorites' ? '还没有收藏的表情' : activeView.kind === 'collection' ? '这个收藏夹还没有图片' : '图库里还没有图片'}</h2><p>{query.trim() ? '换个词或清除搜索范围再试。' : activeView.kind === 'recent' ? '复制过的表情会出现在这里。' : '可以在主窗口导入或整理表情。'}</p></div>
+        {:else}<div class="picker-grid">{#each memes as m (m.id)}<button id={`picker-cell-${m.id}`} type="button" class={`picker-cell ${m.id === selectedId ? 'active' : ''}`} title={m.original_filename} aria-label={m.original_filename} onmouseenter={() => (selectedId = m.id)} onclick={() => void copySelected()}><MemeThumb contentHash={m.content_hash} thumbnailPath={m.thumbnail_path} internalPath={m.internal_path} hoverPlay /></button>{/each}</div>{/if}
       </div>
-    </div>
-  </main>
+      {#if copyError}<div class="picker-error" role="alert">{copyError}</div>{/if}
+    </main>
+  </div>
 </div>
+
+<style>
+  .picker-shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .picker-toolbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-height: 55px; padding: 8px 11px; border-bottom: 1px solid var(--border); }
+  .picker-search { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; height: 36px; padding: 0 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); color: var(--muted); }
+  .picker-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent); }
+  .picker-search input { width: 100%; min-width: 0; outline: 0; border: 0; background: transparent; color: var(--text); }
+  .picker-search input::placeholder { color: var(--faint); }
+  .picker-scope-wrap { position: relative; }
+  .picker-scope { max-width: 140px; width: 140px; justify-content: space-between; }
+  .picker-scope-menu { position: absolute; top: 43px; right: 0; z-index: 20; width: 200px; }
+  .picker-scope-options { max-height: 242px; overflow: auto; }
+  .picker-body { display: flex; flex: 1; min-height: 0; }
+  .picker-sidebar { width: 142px; flex-shrink: 0; overflow: auto; padding: 10px 8px; background: var(--sidebar); border-right: 1px solid var(--border); }
+  .picker-side-label { padding: 3px 8px 7px; color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+  .picker-side-label.collections-label { margin-top: 12px; }
+  .picker-nav { display: flex; width: 100%; align-items: center; gap: 8px; min-height: 32px; padding: 5px 8px; border-radius: 7px; text-align: left; color: var(--muted); }
+  .picker-nav:hover { background: var(--hover); color: var(--text); }
+  .picker-nav.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+  .picker-nav.nested { padding-left: 17px; }
+  .picker-group { margin-top: 8px; padding: 4px 8px; color: var(--faint); font-size: 11px; font-weight: 650; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .picker-main { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+  .picker-results-heading { display: flex; align-items: baseline; gap: 8px; padding: 11px 14px 3px; font-size: 13px; font-weight: 600; }
+  .picker-results-heading .ui-faint { font-size: 11px; font-weight: 400; }
+  .picker-grid-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 13px 13px; }
+  .picker-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(74px,1fr)); gap: 8px; align-content: start; }
+  .picker-cell { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); overflow: hidden; transition: border-color 100ms, box-shadow 100ms; }
+  .picker-cell:hover, .picker-cell.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .picker-error { padding: 7px 13px; background: var(--danger-soft); color: var(--danger); font-size: 12px; }
+</style>

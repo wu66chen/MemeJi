@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import Icon from './Icon.svelte';
 
   interface Props {
     initialHotkey: string;
@@ -80,31 +81,34 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="flex items-center gap-2">
-  <kbd class="rounded border border-neutral-300 bg-neutral-100 px-2 py-1 text-xs dark:border-neutral-600 dark:bg-neutral-800">
-    {hotkey}
-  </kbd>
+<div class="hotkey-control">
+  <kbd><Icon name="keyboard" size={16}/>{hotkey}</kbd>
   <button
     type="button"
-    class={`rounded px-2 py-1 text-xs ${
-      recording
-        ? "bg-red-600 text-white"
-        : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300 dark:bg-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-600"
-    }`}
+    class={`ui-button small ${recording ? 'recording' : ''}`}
     onclick={() => (recording = !recording)}
   >
-    {recording ? "录制中…（Esc 取消）" : "重新录制"}
+    {recording ? "按下组合键…" : "更改"}
   </button>
   <button
     type="button"
-    class="rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+    class="ui-button small ghost"
     onclick={() => void resetDefault()}
   >
     恢复默认
   </button>
   {#if status}
-    <span class={`text-xs ${status.ok ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+    <span role="status" class={`hotkey-status ${status.ok ? 'ok' : 'error'}`}>
       {status.text}
     </span>
   {/if}
 </div>
+
+<style>
+  .hotkey-control { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 9px; }
+  kbd { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--text); font-family: inherit; font-size: 12px; font-weight: 600; }
+  .recording { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
+  .hotkey-status { font-size: 12px; }
+  .hotkey-status.ok { color: var(--accent-ink); }
+  .hotkey-status.error { color: var(--danger); }
+</style>

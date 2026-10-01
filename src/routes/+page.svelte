@@ -9,6 +9,7 @@
   import OnboardingWizard from "$lib/components/OnboardingWizard.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import CollectionTransferDialog from "$lib/components/CollectionTransferDialog.svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import { selectIds } from "$lib/selection";
   import { checkForUpdatesOnStartup } from "$lib/updater";
 
@@ -81,10 +82,10 @@
   let transferIds = $state<number[]>([]);
   let transferSource = $state<number | null>(null);
   let dragSelection = $state<{ ids: number[]; sourceId: number | null } | null>(null);
-  const actionClass = 'rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed dark:border-neutral-600 dark:hover:bg-neutral-700';
   let query = $state("");
   let onboarded = $state<boolean | null>(null);
   let showSettings = $state(false);
+  let detailsOpen = $state(true);
   $effect(() => {
     if (!actionMessage || actionError) return;
     const message = actionMessage;
@@ -106,10 +107,10 @@
   });
 
   const emptyHints: Record<View["kind"], string> = {
-    all: "还没有表情。点击「导入图片」或「导入文件夹」开始整理 — 按 Ctrl+Shift+Space 呼出 Quick Picker",
-    favorites: "还没有收藏。右键表情并选择「收藏」，常用的图会出现在这里",
-    recent: "还没有使用记录。复制过的表情会按最近使用排在前面",
-    collection: "这个收藏夹还是空的",
+    all: "导入常用表情，随时搜索和发送。",
+    favorites: "常用表情会出现在这里。",
+    recent: "用过的表情会按时间出现在这里。",
+    collection: "把图片导入这个收藏夹，或者从其他位置拖进来。",
   };
 
   let memesRequestId = 0;
@@ -156,8 +157,10 @@
     if (busy || loading || loadError) return;
     selectedIds = memes.map(m => m.id); anchorId = selectedIds[0] ?? null;
   }
+  function showTagDialog(node: HTMLDialogElement) {
+    node.showModal();
+  }
   function onKeydown(event: KeyboardEvent) {
-    if (tagDialogOpen && event.key === 'Escape') { tagDialogOpen = false; return; }
     if (event.isComposing || busy || showSettings || onboarded === false || transferMode || tagDialogOpen) return;
     if (contextMenu && event.key === 'Escape') { event.preventDefault(); contextMenu = null; return; }
     const target = event.target as HTMLElement;
@@ -455,19 +458,30 @@
   if (scopeOpen && !target.closest('[data-search-scope]')) scopeOpen = false;
 }} />
 
-<main class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
-  <header class="flex items-center justify-end border-b border-neutral-200 px-4 py-2 dark:border-neutral-800">
-    <div class="flex items-center gap-2" inert={busy}>
-      <button class="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700 dark:bg-neutral-700 dark:hover:bg-neutral-600" onclick={importFiles}>
-        导入图片
-      </button>
-      <button class="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700 dark:bg-neutral-700 dark:hover:bg-neutral-600" onclick={importFolder}>
-        导入文件夹
-      </button>
-      <button class="rounded border border-neutral-300 px-3 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800" onclick={() => (showSettings = true)}>
-        设置
-      </button>
+<main class="app-shell">
+  <header class="app-toolbar">
+    <div class="app-search">
+      <Icon name="search" size={17} />
+      <input bind:value={query} disabled={busy} oninput={onSearchInput}
+        aria-label="搜索表情" placeholder="搜索文件名、标签或描述" />
+      {#if query}<button type="button" class="icon-button small" aria-label="清空搜索" onclick={() => { query=''; onSearchInput(); }}><Icon name="x" size={14} /></button>{/if}
     </div>
+    <div data-search-scope class="scope-wrap">
+      <button type="button" class="ui-button scope-trigger" aria-expanded={scopeOpen} aria-label={`搜索范围：${scopeLabel}`}
+        onclick={() => (scopeOpen = !scopeOpen)}><span class="truncate">{scopeLabel}</span><Icon name="chevron-down" size={14} /></button>
+      {#if scopeOpen}
+        <div class="scope-popover ui-menu">
+          <div class="scope-heading"><span>搜索范围</span><button type="button" onclick={clearSearchScopes}>清除所有</button></div>
+          {#each collections as c (c.id)}
+            <label class="scope-option"><input class="ui-checkbox" type="checkbox" checked={searchScopeIds.includes(c.id)} onchange={() => toggleSearchScope(c.id)} /><span class="truncate" title={c.name}>{c.name}</span></label>
+          {:else}<p class="scope-empty">还没有收藏夹</p>{/each}
+        </div>
+      {/if}
+    </div>
+    <div class="toolbar-divider"></div>
+    <button class="ui-button primary import-button" disabled={busy} onclick={importFiles}><Icon name="upload" size={16} /><span>导入图片</span></button>
+    <button class="ui-button folder-import" disabled={busy} onclick={importFolder} title="导入文件夹"><Icon name="folder-plus" size={17} /><span>导入文件夹</span></button>
+    <button class="icon-button settings-button" aria-label="设置" title="设置" onclick={() => (showSettings = true)}><Icon name="settings" size={18} /></button>
   </header>
   <div class="flex flex-1 overflow-hidden">
     <CollectionSidebar
@@ -490,48 +504,34 @@
       onDropMemes={dropMemes}
     />
     <section class="flex min-w-0 flex-1 flex-col overflow-hidden" aria-label="图库管理">
-      <div class="flex items-center gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
-        <input
-          bind:value={query}
-          disabled={busy}
-          oninput={onSearchInput}
-          placeholder="搜索文件名、标签、描述…（空格分隔多关键词）"
-          class="min-w-0 flex-1 rounded bg-neutral-200/70 px-3 py-1.5 text-sm outline-none placeholder:text-neutral-400 focus:ring-1 focus:ring-neutral-400 dark:bg-neutral-800 dark:focus:ring-neutral-600"
-        />
-        <div data-search-scope class="relative shrink-0">
-          <button type="button" class={actionClass} aria-expanded={scopeOpen} aria-label={`搜索范围：${scopeLabel}`}
-            onclick={() => (scopeOpen = !scopeOpen)}>{scopeLabel} ▾</button>
-          {#if scopeOpen}
-            <div class="absolute right-0 top-full z-30 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-2 text-sm shadow-xl dark:border-neutral-700 dark:bg-neutral-800">
-              <div class="flex items-center justify-between gap-2 border-b border-neutral-200 pb-2 dark:border-neutral-700">
-                <span class="text-xs font-medium">搜索范围</span>
-                <button type="button" class="text-xs text-blue-600 hover:underline dark:text-blue-400" onclick={clearSearchScopes}>清除所有 · 全局</button>
-              </div>
-              {#each collections as c (c.id)}
-                <label class="flex cursor-pointer items-center gap-2 rounded px-1 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-700">
-                  <input type="checkbox" checked={searchScopeIds.includes(c.id)} onchange={() => toggleSearchScope(c.id)} />
-                  <span class="min-w-0 flex-1 truncate" title={c.name}>{c.name}</span>
-                </label>
-              {:else}<p class="py-2 text-xs text-neutral-500">还没有收藏夹</p>{/each}
-            </div>
+      <div class="gallery-heading" aria-busy={busy}>
+        <h1>{viewTitle}</h1><span class="gallery-count">{memes.length} 张</span>
+        <span class="flex-1"></span>
+        {#if selectedIds.length}
+          <span class="selection-count">已选 {selectedIds.length} 张</span>
+          <button class="ui-button small selected-action" onclick={() => openTransfer('add')}><Icon name="folder-plus" size={15} />加入收藏夹</button>
+          <button class="ui-button small selected-action" onclick={() => menuCommand(() => { tagDialogOpen = true; })}><Icon name="tag" size={15} />添加标签</button>
+          <button class="icon-button" aria-label="更多所选表情操作" title="更多操作" onclick={(e) => openContextMenu(e)}><Icon name="more" size={17} /></button>
+          <button class="icon-button" aria-label="清空选择" title="清空选择" onclick={clearSelection}><Icon name="x" size={16} /></button>
+        {/if}
+        {#if selectedIds.length === 1}
+          <button class={`icon-button ${detailsOpen ? 'details-active' : ''}`} aria-label={detailsOpen ? '隐藏详情' : '显示详情'} title={detailsOpen ? '隐藏详情' : '显示详情'} onclick={() => (detailsOpen = !detailsOpen)}><Icon name="panel" size={17} /></button>
+        {/if}
+        {#if busy}<span class="ui-muted" role="status">正在处理…</span>{/if}
+      </div>
+      {#if loadError}<div role="alert" class="gallery-error"><Icon name="alert" size={17} />{loadError} <button class="ui-button small" onclick={() => void refresh()}>重试</button></div>{/if}
+      <div role="region" aria-label="图片选择区域" class="gallery-scroll" onpointerdown={startMarquee} onpointermove={moveMarquee} onpointerup={endMarquee} onpointercancel={endMarquee}>
+      {#if memes.length === 0}
+        <div class="ui-empty">
+          <div class="ui-empty-mark"><Icon name={query.trim() ? 'search' : 'image'} size={30} /></div>
+          <h2>{loading ? '正在加载' : loadError ? '图库暂时无法加载' : query.trim() ? '没有找到表情' : activeView.kind === 'all' ? '从第一张表情开始' : activeView.kind === 'collection' ? '这个收藏夹还没有图片' : activeView.kind === 'favorites' ? '还没有收藏的表情' : '还没有使用记录'}</h2>
+          {#if !loading && !loadError}<p>{query.trim() ? '换个关键词，或清除搜索范围再试。' : emptyHints[activeView.kind]}</p>{/if}
+          {#if !loading && !loadError && !query.trim() && (activeView.kind === 'all' || activeView.kind === 'collection')}
+            <button class="ui-button primary" onclick={importFiles}><Icon name="upload" size={16} />导入图片</button>
           {/if}
         </div>
-      </div>
-      <div class="flex items-center gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800" aria-busy={busy}>
-        <span class="mr-auto text-sm font-medium">{viewTitle} · {memes.length} 张{selectedIds.length ? ` · 已选 ${selectedIds.length} 张` : ''}</span>
-        {#if selectedIds.length}
-          <button class={actionClass} aria-label="所选表情操作" onclick={(e) => openContextMenu(e)}>操作 ⋯</button>
-        {/if}
-        {#if busy}<span class="text-xs" role="status">正在处理…</span>{/if}
-      </div>
-      {#if loadError}<div role="alert" class="px-3 py-2 text-xs text-red-600 dark:text-red-400">{loadError} <button class="underline" onclick={() => void refresh()}>重试</button></div>{/if}
-      <div role="region" aria-label="图片选择区域" class="flex-1 overflow-y-auto p-3" onpointerdown={startMarquee} onpointermove={moveMarquee} onpointerup={endMarquee} onpointercancel={endMarquee}>
-      {#if memes.length === 0}
-        <div class="grid h-full place-items-center text-sm text-neutral-400">
-          {loading ? '正在加载…' : loadError ? '图库暂时无法加载，请重试' : query.trim() ? "没有匹配的表情" : emptyHints[activeView.kind]}
-        </div>
       {:else}
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
+        <div class="gallery-grid">
           {#each memes as m (m.id)}
             <div role="presentation" class="group relative min-w-0" data-meme-card={m.id} oncontextmenu={(e) => openContextMenu(e, m.id)}>
             <button
@@ -542,11 +542,7 @@
               ondragend={() => (dragSelection = null)}
               aria-label={m.original_filename}
               aria-pressed={selectedSet.has(m.id)}
-              class={`block w-full overflow-hidden rounded border bg-white text-left dark:bg-neutral-800 ${
-                selectedSet.has(m.id)
-                  ? "border-blue-500 ring-2 ring-blue-500"
-                  : "border-neutral-200 dark:border-neutral-800"
-              }`}
+              class={`gallery-card ${selectedSet.has(m.id) ? 'is-selected' : ''}`}
               onclick={(e) => pick(m.id, e)}
             >
               <MemeThumb
@@ -555,10 +551,10 @@
                 internalPath={m.internal_path}
                 hoverPlay
               />
-              <span class="block truncate px-1 py-0.5 text-[10px] text-neutral-500">{m.original_filename}</span>
+              <span class="gallery-filename" title={m.original_filename}>{m.original_filename}</span>
             </button>
             <input type="checkbox" aria-label={`选择 ${m.original_filename}`} checked={selectedSet.has(m.id)} disabled={busy || loading || !!loadError}
-              class={`absolute left-1 top-1 h-4 w-4 cursor-pointer accent-blue-600 ${selectedSet.has(m.id) ? '' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
+              class={`gallery-checkbox ui-checkbox ${selectedSet.has(m.id) ? 'is-visible' : ''}`}
               onclick={(e) => pick(m.id, e, true)} />
             </div>
           {/each}
@@ -566,12 +562,7 @@
       {/if}
       </div>
     </section>
-    {#if selectedIds.length > 1}
-      <aside class="w-56 shrink-0 border-l border-neutral-200 p-4 dark:border-neutral-800">
-        <h2 class="font-medium">已选择 {selectedIds.length} 张</h2>
-        <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">右键或点击「操作」整理所选表情。</p>
-      </aside>
-    {:else}
+    {#if selected && detailsOpen}
     <DetailPanel
       disabled={busy}
       meme={selected}
@@ -581,6 +572,7 @@
       onAddTag={addTag}
       onRemoveTag={removeTag}
       onRemoveFromCollection={removeFromCollection}
+      onClose={() => (detailsOpen = false)}
     />
     {/if}
   </div>
@@ -598,55 +590,51 @@
   {#if contextMenu && selectedIds.length}
     <div bind:this={menuEl} data-meme-menu role="menu" aria-label={`所选 ${selectedIds.length} 张表情的操作`} tabindex="-1"
       onkeydown={onMenuKeydown}
-      class="fixed z-40 w-56 rounded-lg border border-neutral-200 bg-white p-1 text-sm text-neutral-900 shadow-2xl dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+      class="ui-menu fixed z-40 w-56"
       style={`left:${contextMenu.x}px;top:${contextMenu.y}px`}
     >
-      <p class="px-3 py-1 text-xs text-neutral-500">已选 {selectedIds.length} 张</p>
-      <button role="menuitem" class="w-full rounded px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
+      <p class="menu-caption">已选 {selectedIds.length} 张</p>
+      <button role="menuitem" class="ui-menu-item"
         onclick={() => menuCommand(() => void batchEdit({kind:'favorite', favorite:!allSelectedFavorite}, allSelectedFavorite ? '已取消收藏' : '已收藏'))}>
-        {allSelectedFavorite ? '取消收藏' : '收藏'}
+        <Icon name="heart" size={16} />{allSelectedFavorite ? '取消收藏' : '收藏'}
       </button>
-      <div role="separator" class="my-1 border-t border-neutral-200 dark:border-neutral-700"></div>
-      <button role="menuitem" class="w-full rounded px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-        onclick={() => menuCommand(() => openTransfer('add'))}>加入收藏夹…</button>
-      <button role="menuitem" disabled={sourceId === null} class="w-full rounded px-3 py-1.5 text-left hover:bg-neutral-100 disabled:opacity-40 dark:hover:bg-neutral-700"
-        onclick={() => menuCommand(() => openTransfer('move'))}>移动到…</button>
+      <div role="separator" class="ui-menu-separator"></div>
+      <button role="menuitem" class="ui-menu-item"
+        onclick={() => menuCommand(() => openTransfer('add'))}><Icon name="folder-plus" size={16} />加入收藏夹…</button>
+      <button role="menuitem" disabled={sourceId === null} class="ui-menu-item"
+        onclick={() => menuCommand(() => openTransfer('move'))}><Icon name="move" size={16} />移动到…</button>
       {#if sourceId !== null}
-        <button role="menuitem" class="w-full rounded px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-          onclick={() => menuCommand(() => void batchEdit({kind:'remove_from_collection',collection_id:sourceId!},'已移出收藏夹'))}>从当前收藏夹移出</button>
+        <button role="menuitem" class="ui-menu-item"
+          onclick={() => menuCommand(() => void batchEdit({kind:'remove_from_collection',collection_id:sourceId!},'已移出收藏夹'))}><Icon name="folder" size={16} />从当前收藏夹移出</button>
       {/if}
-      <div role="separator" class="my-1 border-t border-neutral-200 dark:border-neutral-700"></div>
-      <button role="menuitem" class="w-full rounded px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-        onclick={() => menuCommand(() => { tagDialogOpen = true; })}>添加标签…</button>
-      <div role="separator" class="my-1 border-t border-neutral-200 dark:border-neutral-700"></div>
-      <button role="menuitem" class="w-full rounded px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
-        onclick={() => menuCommand(() => void deleteSelected())}>删除…</button>
+      <div role="separator" class="ui-menu-separator"></div>
+      <button role="menuitem" class="ui-menu-item"
+        onclick={() => menuCommand(() => { tagDialogOpen = true; })}><Icon name="tag" size={16} />添加标签…</button>
+      <div role="separator" class="ui-menu-separator"></div>
+      <button role="menuitem" class="ui-menu-item danger"
+        onclick={() => menuCommand(() => void deleteSelected())}><Icon name="trash" size={16} />删除…</button>
     </div>
   {/if}
   {#if tagDialogOpen}
-    <div class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="presentation">
-      <div role="dialog" aria-label="为所选表情添加标签" class="w-full max-w-sm rounded-xl bg-white p-5 text-neutral-900 shadow-2xl dark:bg-neutral-800 dark:text-neutral-100">
+    <dialog use:showTagDialog onclose={() => (tagDialogOpen = false)} aria-label="为所选表情添加标签" class="ui-dialog w-full max-w-sm p-0">
       <form onsubmit={(e) => { e.preventDefault(); void addBulkTag(); }}>
-        <h2 class="mb-2 font-medium">添加标签 · {selectedIds.length} 张</h2>
-        <input class="w-full rounded border border-neutral-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-600"
+        <div class="ui-dialog-header"><h2>添加标签</h2><button type="button" class="icon-button round" aria-label="关闭" onclick={() => (tagDialogOpen=false)}><Icon name="x" size={16}/></button></div>
+        <div class="ui-dialog-body"><label class="ui-label mb-2" for="bulk-tag-input">为 {selectedIds.length} 张表情添加标签</label>
+        <input id="bulk-tag-input" class="ui-input"
           aria-label="标签名称" list="bulk-existing-tags" bind:value={bulkTag} placeholder="输入标签名称" />
         <datalist id="bulk-existing-tags">{#each allTags as tag (tag.id)}<option value={tag.name}></option>{/each}</datalist>
-        <div class="mt-4 flex justify-end gap-2">
-          <button type="button" class={actionClass} disabled={busy} onclick={() => (tagDialogOpen = false)}>取消</button>
-          <button type="submit" class={actionClass} disabled={busy || !bulkTag.trim()}>添加</button>
-        </div>
+        </div><div class="ui-dialog-footer"><button type="button" class="ui-button" disabled={busy} onclick={() => (tagDialogOpen = false)}>取消</button><button type="submit" class="ui-button primary" disabled={busy || !bulkTag.trim()}>添加</button></div>
       </form>
-      </div>
-    </div>
+    </dialog>
   {/if}
   {#if actionMessage}
-    <div role={actionError ? 'alert' : 'status'} class={`fixed bottom-4 right-4 z-50 flex max-w-md items-start gap-3 rounded-lg border bg-white px-4 py-3 text-sm shadow-xl dark:bg-neutral-800 ${actionError ? 'border-red-300 text-red-700 dark:border-red-800 dark:text-red-300' : 'border-neutral-200 text-neutral-900 dark:border-neutral-700 dark:text-neutral-100'}`}>
+    <div role={actionError ? 'alert' : 'status'} class={`app-toast ${actionError ? 'is-error' : ''}`}>
       <span class="break-words">{actionMessage}</span>
-      <button type="button" aria-label="关闭提示" class="shrink-0 text-neutral-400 hover:text-neutral-800 dark:hover:text-white" onclick={() => (actionMessage = '')}>×</button>
+      <button type="button" aria-label="关闭提示" class="icon-button small" onclick={() => (actionMessage = '')}><Icon name="x" size={15}/></button>
     </div>
   {/if}
   {#if marquee && (Math.abs(marquee.x2 - marquee.x1) > 3 || Math.abs(marquee.y2 - marquee.y1) > 3)}
-    <div class="pointer-events-none fixed z-30 border border-blue-500 bg-blue-400/20"
+    <div class="marquee-rect pointer-events-none fixed z-30"
       style={`left:${Math.min(marquee.x1,marquee.x2)}px;top:${Math.min(marquee.y1,marquee.y2)}px;width:${Math.abs(marquee.x2-marquee.x1)}px;height:${Math.abs(marquee.y2-marquee.y1)}px`}></div>
   {/if}
 </main>
