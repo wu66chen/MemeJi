@@ -1,8 +1,6 @@
 //! Quick Picker 的定位几何：光标四象限展开 + 屏幕边界 clamp。
 //!
 //! Seam：`compute_anchor_position`（纯函数，物理像素进出）。
-
-
 //! 多显示器：调用方先用 `monitor_from_point` 取光标所在显示器，本函数只在
 //! 该显示器矩形内摆放，天然不会跳屏。
 

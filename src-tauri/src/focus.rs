@@ -1,8 +1,6 @@
 //! 焦点捕获与恢复：呼出前记录前台应用，复制后把焦点还给呼出方。
 //!
 //! Seam：`capture` / `restore`。
-
-
 //!
 //! Windows：记录 `GetForegroundWindow()` 的 HWND + pid；恢复 = SetForegroundWindow
 //! （前台锁定时 AttachThreadInput 绕行），HWND 失效时按 pid 枚举剩余可见窗口兜底。

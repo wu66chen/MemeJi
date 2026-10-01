@@ -2,7 +2,6 @@
 //!
 //! Seam：`load` / `save` / `config_path`。
 
-
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_HOTKEY_WIN: &str = "Ctrl+Shift+Space";

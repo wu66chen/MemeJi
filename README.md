@@ -24,7 +24,7 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
       </a><br />
       <strong>Quick Picker</strong>
     </td>
-    <td align="center" width="33%">
+    <td align="center" width="20%">
       <a href="docs/screenshots/settings.png">
         <img src="docs/screenshots/settings.png" alt="设置" width="100%" />
       </a><br />
@@ -73,10 +73,8 @@ Windows 安装包由 Tauri 生成在 `src-tauri/target/release/bundle/nsis/`。
 
 ## 文档
 
-
 - [自动粘贴的焦点判定与限制](docs/quick-picker-auto-paste.md)
 - [GitHub 更新发布配置](docs/updater-setup.md)
-
 
 ## 许可证
 

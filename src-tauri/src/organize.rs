@@ -3,7 +3,6 @@
 //! Seam：`create_collection` / `rename_collection` / `delete_collection` /
 //! `reorder_collections` / `list_tags` / `add_tag` / `remove_tag` /
 //! `set_favorite` / `set_description` / `touch_recent_at` / `delete_meme`。
-
 //!
 //! 系统收藏夹（全部/收藏/最近使用）是虚拟视图（见 `library::GalleryView`），
 //! 不落 collection 表，因此天然固定且不可删；删除收藏夹只删关系，不删图。

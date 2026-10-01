@@ -2,7 +2,6 @@
 //!
 //! Seam：`open_db` / `import_paths` / `list_memes` / `list_collections`。
 
-
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;

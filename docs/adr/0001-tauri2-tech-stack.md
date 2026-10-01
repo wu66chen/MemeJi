@@ -23,5 +23,3 @@
 - 需要自研两块原生模块：Smart Copy 动图写入、前台焦点恢复（一次性、低风险）
 - 前端受各平台 WebView 引擎差异约束（macOS 动态 WebP 悬停播放需 Safari 14+/macOS 11+）
 - Rust 工具链成为开发前置要求
-
-

@@ -2,8 +2,6 @@
 //!
 //! Seam：`TempStore` / `dib_from_rgba` / `hdrop_from_paths` / `write_clipboard` /
 //! `copy_with_strategy`（仅 Windows；macOS 通道随打包票落地）。
-
-
 //!
 //! 策略（位图通道天然单帧，文件引用是唯一保动画通道）：
 //! - 静态图：CF_DIB + CF_DIBV5 + PNG 流，聊天软件直接粘贴为图片

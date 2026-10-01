@@ -3,8 +3,6 @@
 //! Seam：`decode_first_frame` / `scaled_dimensions` / `generate_thumbnail` /
 //! `ensure_thumbnail` / `enqueue` / `thumbnail_path` / `cache_dir`。
 
-
-
 use crate::AppState;
 use image::AnimationDecoder;
 use std::io::Cursor;
