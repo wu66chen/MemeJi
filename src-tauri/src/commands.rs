@@ -160,6 +160,24 @@ pub fn delete_meme(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     organize::delete_meme(&conn, &library_root, id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn batch_edit_memes(app: tauri::AppHandle, meme_ids: Vec<i64>, action: organize::BatchAction) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        organize::batch_edit(&conn, &meme_ids, &action).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_memes(app: tauri::AppHandle, meme_ids: Vec<i64>) -> Result<organize::BatchDeleteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        Ok(organize::batch_delete(&conn, &state.library_root_clone(), &meme_ids))
+    }).await.map_err(|e| e.to_string())?
+}
+
 /// Smart Copy：静态图走位图通道；动图走临时副本文件引用 + 首帧位图兜底。
 /// 成功后隐藏 Quick Picker 并把焦点还给呼出方应用。
 #[tauri::command]

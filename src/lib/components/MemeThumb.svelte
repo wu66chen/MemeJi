@@ -61,9 +61,9 @@
   class="aspect-square w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800"
 >
   {#if hoverPlay && internalPath && hovered}
-    <img src={convertFileSrc(internalPath)} class="h-full w-full object-contain" alt="" />
+    <img draggable="false" src={convertFileSrc(internalPath)} class="h-full w-full object-contain" alt="" />
   {:else if src}
-    <img {src} class="h-full w-full object-contain" alt="" />
+    <img draggable="false" {src} class="h-full w-full object-contain" alt="" />
   {:else}
     <div class="h-full w-full animate-pulse bg-neutral-200 dark:bg-neutral-700"></div>
   {/if}

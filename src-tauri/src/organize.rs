@@ -420,21 +420,104 @@ pub fn delete_meme(
     let Some((internal_path, content_hash)) = row else {
         return err(format!("表情不存在：{meme_id}"));
     };
-    conn.execute("DELETE FROM meme WHERE id = ?1", params![meme_id])?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM meme WHERE id = ?1", params![meme_id])?;
     let internal = library_root.join(internal_path);
-    if internal.exists() {
-        std::fs::remove_file(internal)?;
+    // Stage the original on the same volume. A locked file leaves the database
+    // transaction uncommitted; a failed commit restores the original filename.
+    let staged = if internal.try_exists()? {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default().as_nanos();
+        let path = internal.with_extension(format!("deleting-{meme_id}-{nonce}"));
+        std::fs::rename(&internal, &path)?;
+        Some(path)
+    } else { None };
+    if let Err(e) = tx.commit() {
+        if let Some(path) = &staged {
+            std::fs::rename(path, &internal).map_err(|restore| OrganizeError::Message(format!("删除失败：{e}；恢复文件失败：{restore}（原文件暂存于 {}）", path.display())))?;
+        }
+        return Err(e.into());
+    }
+    if let Some(path) = staged {
+        if let Err(e) = std::fs::remove_file(&path) {
+            eprintln!("清理已删除图片的暂存文件失败 {}: {e}", path.display());
+        }
     }
     let thumb = thumbs::thumbnail_path(&thumbs::cache_dir(library_root), &content_hash);
     if thumb.exists() {
-        std::fs::remove_file(thumb)?;
+        if let Err(e) = std::fs::remove_file(thumb) { eprintln!("清理已删除图片的缩略图失败: {e}"); }
     }
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// 测试：收藏夹关系、标签规则、收藏状态、最近使用去重、删除清理
+// 批量操作
 // ---------------------------------------------------------------------------
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchAction {
+    Favorite { favorite: bool },
+    AddTag { name: String },
+    AddToCollection { collection_id: i64 },
+    MoveToCollection { source_id: i64, target_id: i64 },
+    RemoveFromCollection { collection_id: i64 },
+}
+
+pub fn batch_edit(conn: &rusqlite::Connection, ids: &[i64], action: &BatchAction) -> Result<usize, OrganizeError> {
+    let ids: std::collections::BTreeSet<i64> = ids.iter().copied().collect();
+    if ids.is_empty() { return err("请先选择表情"); }
+    let tx = conn.unchecked_transaction()?;
+    for id in &ids {
+        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM meme WHERE id = ?1)", params![id], |r| r.get(0))?;
+        if !exists { return err(format!("表情不存在：{id}，请刷新后重试")); }
+    }
+    let collection_ids = match action {
+        BatchAction::AddToCollection { collection_id } | BatchAction::RemoveFromCollection { collection_id } => vec![*collection_id],
+        BatchAction::MoveToCollection { source_id, target_id } => {
+            if source_id == target_id { return err("目标与来源收藏夹相同"); }
+            for id in &ids {
+                let member: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM meme_collection WHERE meme_id = ?1 AND collection_id = ?2)", params![id,source_id], |r| r.get(0))?;
+                if !member { return err(format!("表情 {id} 已不在来源收藏夹中，请刷新后重试")); }
+            }
+            vec![*source_id, *target_id]
+        },
+        _ => vec![],
+    };
+    for id in collection_ids {
+        if !collection_row_exists(&tx, id)? { return err(format!("收藏夹不存在：{id}")); }
+    }
+    for id in &ids {
+        match action {
+            BatchAction::Favorite { favorite } => set_favorite(&tx,*id,*favorite)?,
+            BatchAction::AddTag { name } => { add_tag(&tx,*id,name)?; },
+            BatchAction::AddToCollection { collection_id } => add_meme_to_collection(&tx,*id,*collection_id)?,
+            BatchAction::MoveToCollection { source_id, target_id } => {
+                add_meme_to_collection(&tx,*id,*target_id)?;
+                remove_meme_from_collection(&tx,*id,*source_id)?;
+            },
+            BatchAction::RemoveFromCollection { collection_id } => remove_meme_from_collection(&tx,*id,*collection_id)?,
+        }
+    }
+    tx.commit()?;
+    Ok(ids.len())
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct DeleteFailure { pub id: i64, pub message: String }
+#[derive(Debug, serde::Serialize)]
+pub struct BatchDeleteResult { pub deleted_ids: Vec<i64>, pub failures: Vec<DeleteFailure> }
+
+pub fn batch_delete(conn: &rusqlite::Connection, root: &Path, ids: &[i64]) -> BatchDeleteResult {
+    let mut result = BatchDeleteResult { deleted_ids: vec![], failures: vec![] };
+    for id in ids.iter().copied().collect::<std::collections::BTreeSet<_>>() {
+        match delete_meme(conn, root, id) {
+            Ok(()) => result.deleted_ids.push(id),
+            Err(e) => result.failures.push(DeleteFailure { id, message: e.to_string() }),
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +563,97 @@ mod tests {
 
     fn names(tags: &[Tag]) -> Vec<String> {
         tags.iter().map(|t| t.name.clone()).collect()
+    }
+
+    #[test]
+    fn batch_move_preserves_other_memberships_and_deduplicates_ids() {
+        let (conn, tmp) = setup();
+        let a = import_png(&conn, &tmp.path().join("lib"), "bulk-move-a.png", 41);
+        let b = import_png(&conn, &tmp.path().join("lib"), "bulk-move-b.png", 42);
+        let source = create_collection(&conn, "来源").unwrap().id;
+        let target = create_collection(&conn, "目标").unwrap().id;
+        let other = create_collection(&conn, "其他").unwrap().id;
+        for id in [a,b] { add_meme_to_collection(&conn,id,source).unwrap(); }
+        add_meme_to_collection(&conn,a,other).unwrap();
+        add_meme_to_collection(&conn,b,target).unwrap();
+        assert_eq!(batch_edit(&conn,&[a,b,a],&BatchAction::MoveToCollection { source_id:source,target_id:target }).unwrap(),2);
+        assert!(library::list_memes(&conn,&GalleryView::Collection(source)).unwrap().is_empty());
+        assert_eq!(library::list_memes(&conn,&GalleryView::Collection(target)).unwrap().len(),2);
+        assert_eq!(collections_of_meme(&conn,a).unwrap().len(),2);
+        assert_eq!(library::list_memes(&conn,&GalleryView::All).unwrap().len(),2);
+    }
+
+    #[test]
+    fn batch_move_rejects_missing_source_membership_without_changing_anything() {
+        let (conn,tmp) = setup();
+        let a = import_png(&conn,&tmp.path().join("lib"),"bulk-source-a.png",43);
+        let b = import_png(&conn,&tmp.path().join("lib"),"bulk-source-b.png",44);
+        let source = create_collection(&conn,"source").unwrap().id;
+        let target = create_collection(&conn,"target").unwrap().id;
+        add_meme_to_collection(&conn,a,source).unwrap();
+        assert!(batch_edit(&conn,&[a,b],&BatchAction::MoveToCollection {source_id:source,target_id:target}).is_err());
+        assert_eq!(collections_of_meme(&conn,a).unwrap()[0].id,source);
+        assert!(collections_of_meme(&conn,b).unwrap().is_empty());
+    }
+
+    #[test]
+    fn batch_edit_rolls_back_on_sql_failure_midway() {
+        let (conn,tmp) = setup();
+        let a = import_png(&conn,&tmp.path().join("lib"),"bulk-rollback-a.png",45);
+        let b = import_png(&conn,&tmp.path().join("lib"),"bulk-rollback-b.png",46);
+        let target = create_collection(&conn,"target").unwrap().id;
+        conn.execute_batch(&format!("CREATE TRIGGER reject_second BEFORE INSERT ON meme_collection WHEN NEW.meme_id = {b} BEGIN SELECT RAISE(ABORT,'blocked'); END;")).unwrap();
+        assert!(batch_edit(&conn,&[a,b],&BatchAction::AddToCollection {collection_id:target}).is_err());
+        assert!(collections_of_meme(&conn,a).unwrap().is_empty());
+        conn.execute_batch("DROP TRIGGER reject_second").unwrap();
+        assert_eq!(batch_edit(&conn,&[a,b],&BatchAction::AddToCollection {collection_id:target}).unwrap(),2);
+    }
+
+    #[test]
+    fn batch_favorites_tags_and_removal_validate_all_ids() {
+        let (conn,tmp) = setup();
+        let a = import_png(&conn,&tmp.path().join("lib"),"bulk-meta-a.png",47);
+        let b = import_png(&conn,&tmp.path().join("lib"),"bulk-meta-b.png",48);
+        assert!(batch_edit(&conn,&[a,999999],&BatchAction::Favorite {favorite:true}).is_err());
+        assert!(library::list_memes(&conn,&GalleryView::Favorites).unwrap().is_empty());
+        assert_eq!(batch_edit(&conn,&[a,b],&BatchAction::Favorite {favorite:true}).unwrap(),2);
+        assert_eq!(library::list_memes(&conn,&GalleryView::Favorites).unwrap().len(),2);
+        batch_edit(&conn,&[a,b],&BatchAction::AddTag {name:"  Cat  ".into()}).unwrap();
+        batch_edit(&conn,&[a,b],&BatchAction::AddTag {name:"cat".into()}).unwrap();
+        assert_eq!(tags_of_meme(&conn,a).unwrap().len(),1);
+        assert_eq!(tags_of_meme(&conn,b).unwrap().len(),1);
+        let c = create_collection(&conn,"remove").unwrap().id;
+        batch_edit(&conn,&[a,b],&BatchAction::AddToCollection {collection_id:c}).unwrap();
+        batch_edit(&conn,&[a,b],&BatchAction::RemoveFromCollection {collection_id:c}).unwrap();
+        assert!(library::list_memes(&conn,&GalleryView::Collection(c)).unwrap().is_empty());
+        assert_eq!(library::list_memes(&conn,&GalleryView::All).unwrap().len(),2);
+    }
+
+    #[test]
+    fn batch_delete_reports_each_unique_item() {
+        let (conn,tmp) = setup();
+        let a = import_png(&conn,&tmp.path().join("lib"),"bulk-delete.png",49);
+        let result = batch_delete(&conn,&tmp.path().join("lib"),&[a,a,999999]);
+        assert_eq!(result.deleted_ids,vec![a]);
+        assert_eq!(result.failures.len(),1);
+        assert_eq!(result.failures[0].id,999999);
+        assert!(library::list_memes(&conn,&GalleryView::All).unwrap().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn batch_delete_keeps_locked_file_and_its_database_record() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (conn,tmp) = setup();
+        let root = tmp.path().join("lib");
+        let a = import_png(&conn,&root,"bulk-locked.png",50);
+        let m = library::list_memes(&conn,&GalleryView::All).unwrap().remove(0);
+        let locked = std::fs::OpenOptions::new().read(true).share_mode(0).open(root.join(&m.internal_path)).unwrap();
+        let result = batch_delete(&conn,&root,&[a]);
+        assert_eq!(result.failures.len(),1);
+        assert_eq!(library::list_memes(&conn,&GalleryView::All).unwrap().len(),1);
+        drop(locked);
+        assert!(root.join(m.internal_path).exists());
     }
 
     #[test]

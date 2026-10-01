@@ -24,6 +24,7 @@
   }
 
   interface Props {
+    disabled?: boolean;
     meme: Meme | null;
     allTags: Tag[];
     collections: Collection[];
@@ -38,6 +39,7 @@
   }
 
   let {
+    disabled = false,
     meme,
     allTags,
     collections,
@@ -89,7 +91,7 @@
   }
 </script>
 
-<aside class="w-64 shrink-0 overflow-y-auto border-l border-neutral-200 p-3 text-sm dark:border-neutral-800">
+<aside inert={disabled} class="w-64 shrink-0 overflow-y-auto border-l border-neutral-200 p-3 text-sm dark:border-neutral-800">
   <p class="mb-2 font-medium">详情</p>
   {#if meme}
     <img

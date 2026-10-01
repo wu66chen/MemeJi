@@ -17,6 +17,10 @@
     | { kind: "collection"; id: number };
 
   interface Props {
+    disabled?: boolean;
+    draggingMemes?: boolean;
+    copyDrop?: boolean;
+    onDropMemes?: (collectionId: number, copy: boolean) => Promise<void>;
     collections: Collection[];
     groups: CollectionGroup[];
     activeView: View;
@@ -32,7 +36,7 @@
     onMoveCollection: (id: number, groupId: number | null) => Promise<void>;
   }
 
-  let { collections, groups, activeView, onSelect, onCreate, onRename, onDelete, onReorder,
+  let { disabled = false, draggingMemes = false, copyDrop = false, onDropMemes, collections, groups, activeView, onSelect, onCreate, onRename, onDelete, onReorder,
     onCreateGroup, onRenameGroup, onDeleteGroup, onReorderGroups, onMoveCollection }: Props =
     $props();
 
@@ -146,7 +150,7 @@
   }
 </script>
 
-<aside class="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 p-2 text-sm dark:border-neutral-800">
+<aside inert={disabled} class="w-44 shrink-0 overflow-y-auto border-r border-neutral-200 p-2 text-sm dark:border-neutral-800">
   <p class="mb-1 px-1 text-xs text-neutral-500">收藏夹</p>
   <ul class="space-y-0.5">
     {#each systemViews as sv (sv.view.kind)}
@@ -162,14 +166,22 @@
           dragOverId === c.id ? "ring-1 ring-neutral-400 dark:ring-neutral-600" : ""
         } ${isCollectionActive(c) ? "bg-neutral-200 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800/60"}`}
         draggable={renamingId !== c.id}
-        ondragstart={() => (dragId = c.id)}
+        ondragstart={(e) => { dragId = c.id; e.dataTransfer?.setData('application/x-memeji-collection', String(c.id)); }}
         ondragover={(e) => {
+          if (!draggingMemes && dragId === null) return;
           e.preventDefault();
+          if (draggingMemes && e.dataTransfer) e.dataTransfer.dropEffect = copyDrop || e.ctrlKey || e.metaKey ? 'copy' : 'move';
           dragOverId = c.id;
         }}
         ondragleave={() => (dragOverId = null)}
         ondrop={(e) => {
           e.preventDefault();
+          e.stopPropagation();
+          if (draggingMemes) {
+            resetDrag();
+            void onDropMemes?.(c.id, e.ctrlKey || e.metaKey);
+            return;
+          }
           onDrop(c.id);
         }}
         ondragend={resetDrag}
@@ -185,7 +197,7 @@
             onblur={() => (renamingId = null)}
           />
         {:else}
-          <button class={`min-w-0 flex-1 truncate py-1 pr-2 text-left ${c.group_id === null ? "pl-2" : "pl-5"}`} onclick={() => onSelect({ kind: "collection", id: c.id })}>
+          <button title={c.name} class={`min-w-0 flex-1 truncate py-1 pr-2 text-left ${c.group_id === null ? "pl-2" : "pl-5"}`} onclick={() => onSelect({ kind: "collection", id: c.id })}>
             {c.name}
           </button>
           <span class="hidden shrink-0 gap-0.5 pr-1 group-hover:flex">
@@ -219,9 +231,10 @@
       <li
         class="group mt-2 flex items-center rounded bg-neutral-100 px-1 dark:bg-neutral-800/60"
         draggable={renamingGroupId !== g.id}
-        ondragstart={(e) => { e.stopPropagation(); groupDragId = g.id; }}
-        ondragover={(e) => e.preventDefault()}
+        ondragstart={(e) => { e.stopPropagation(); groupDragId = g.id; e.dataTransfer?.setData('application/x-memeji-group',String(g.id)); }}
+        ondragover={(e) => { if (!draggingMemes) e.preventDefault(); }}
         ondrop={(e) => {
+          if (draggingMemes) return;
           e.preventDefault();
           if (dragId !== null) { const id = dragId; resetDrag(); void onMoveCollection(id, g.id); }
           else dropGroup(g.id);

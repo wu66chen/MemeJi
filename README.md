@@ -37,6 +37,7 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
 
 - 托管本地图片库，按内容哈希去重
 - 收藏夹支持分组；表情可加入多个收藏夹
+- 多选、范围选择与批量收藏、标签、删除；支持批量加入或移动收藏夹
 - 按文件名、标签和描述搜索
 - Quick Picker 支持键盘导航、鼠标附近呼出和快速搜索
 - Smart Copy 为静态图写入位图格式，为动图保留文件引用
@@ -45,6 +46,22 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
 - 更新设置支持关闭、检查后询问或自动安装；GitHub 发布源配置见 [更新发布配置](docs/updater-setup.md)
 
 图库和偏好保存在本机，不会上传到服务端。
+
+## Windows 安装
+
+从 [GitHub Releases](https://github.com/wu66chen/MemeJi/releases) 下载 `MemeJi_*_x64-setup.exe`，运行安装程序。
+
+当前安装包尚未使用 Windows Authenticode 代码签名，可能显示 SmartScreen「Windows 已保护你的电脑」和「发布者未知」。确认文件来自本项目 Releases 后，可选择「更多信息 → 仍要运行」（若已显示该按钮则直接选择）。无需关闭 Defender 或 SmartScreen。SHA-256 校验值用于核对文件完整性，不代表安全认证。
+
+可信代码签名需要证书或签名服务；新发布的已签名文件也可能尚未积累信誉。详见 [Microsoft SmartScreen 说明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)。Tauri 自动更新签名与 Windows 代码签名是两套独立机制。
+
+## 批量整理（0.1.2）
+
+- 点击「多选」或使用 Ctrl 点选、Shift 连选；Ctrl+A /「全选当前结果」只选择当前显示的结果。
+- 选中后可批量收藏、取消收藏、添加标签、加入收藏夹或删除。删除前会确认数量；失败项会保留选择并显示原因。
+- 在具体收藏夹内使用「移动到…」，或把选中的图片拖到左侧目标收藏夹：只移出当前来源，保留其他收藏夹归属。
+- 按住 Ctrl 拖放可保留来源。在「全部 / 收藏 / 最近使用」及全库搜索结果中，拖放默认加入目标收藏夹。
+- 修改搜索或切换视图会清空选择；Esc 清空选择。
 
 ## 开发环境
 
@@ -64,6 +81,7 @@ pnpm tauri dev
 
 ```powershell
 pnpm check
+pnpm test
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build

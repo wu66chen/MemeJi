@@ -170,6 +170,8 @@ pub fn run() {
             commands::set_favorite,
             commands::set_description,
             commands::delete_meme,
+            commands::batch_edit_memes,
+            commands::delete_memes,
             commands::smart_copy,
             commands::collections_of_meme,
             commands::add_meme_to_collection,
