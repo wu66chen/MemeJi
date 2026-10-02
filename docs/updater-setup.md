@@ -18,8 +18,8 @@
    }
    ```
 
-3. 发布构建环境必须设置 `TAURI_SIGNING_PRIVATE_KEY`（私钥文件路径或内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。本机的 `password.dpapi` 只允许当前 Windows 用户解密，可在构建进程内临时转成环境变量；构建完成后清除该变量。不要提交私钥、密码或明文 `.env`。`requireSignedVersion` 需要新版 Tauri CLI 自动给签名绑定版本。
-4. 构建 Windows NSIS 安装器，上传 EXE、其 `.sig` 和 `latest.json` 到同一个正式 Release。`latest.json` 至少包含 SemVer `version`、`platforms.windows-x86_64.url` 和该 EXE `.sig` 文件的**内容**作为 `signature`。发布脚本必须在上传后复核 URL 和签名。未发布的草稿不会供 `/releases/latest/` 使用。
+3. 发布构建环境必须设置 `TAURI_SIGNING_PRIVATE_KEY`（私钥文件路径或内容）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。本机的 `password.dpapi` 只允许当前 Windows 用户解密，可在构建进程内临时转成环境变量；构建完成后清除该变量。不要提交私钥、密码或明文 `.env`。`requireSignedVersion` 必须使用 **Tauri CLI 2.12.0 或更新版本**：旧 CLI 生成的签名缺少版本绑定，即使签名文件本身存在，应用也会拒绝安装。
+4. 构建 Windows NSIS 安装器，生成 EXE、其 `.sig`、`SHA256SUMS.txt` 和 `latest.json` 后，先运行 `pnpm verify:release`；它会检查签名中的版本、清单 URL/签名和安装包哈希。四个文件须上传到同一个正式 Release。`latest.json` 至少包含 SemVer `version`、`platforms.windows-x86_64.url` 和该 EXE `.sig` 文件的**内容**作为 `signature`。上传后还须从公开 `/releases/latest/download/latest.json` 回读验证。未发布的草稿不会供 `/releases/latest/` 使用。
 5. 在一台安装 0.1.3 的 Windows 机器上测试检查、确认、下载、签名验证、安装、重启和用户数据保留。Windows updater 安装时会退出当前应用；`passive` 模式显示安装进度。
 
 如果发布 ARM64 或其他平台，在 `latest.json` 中加入对应的 `windows-aarch64` 等平台项和签名。自动更新签名不会改变 Windows SmartScreen 的「发布者未知」提示；那需要另行配置可信代码签名。

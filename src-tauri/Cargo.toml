@@ -1,6 +1,6 @@
 [package]
 name = "meme-manager"
-version = "0.1.4"
+version = "0.1.5"
 description = "Windows meme library and quick picker"
 edition = "2021"
 
