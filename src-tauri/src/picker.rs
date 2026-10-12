@@ -98,4 +98,13 @@ mod tests {
         assert_eq!((x, y), (1942.0, 512.0));
         assert!(x >= right.x && x + WIN.0 <= right.x + right.width);
     }
+
+    #[test]
+    fn negative_monitor_respects_work_area_and_taskbar() {
+        let work_area = Rect { x: -1600.0, y: 40.0, width: 1600.0, height: 820.0 };
+        let (x, y) = compute_anchor_position((-12.0, 850.0), work_area, WIN, MARGIN);
+        assert_eq!((x, y), (-664.0, 418.0));
+        assert!(x >= work_area.x && x + WIN.0 <= work_area.x + work_area.width);
+        assert!(y >= work_area.y && y + WIN.1 <= work_area.y + work_area.height);
+    }
 }

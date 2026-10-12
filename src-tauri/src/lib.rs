@@ -5,6 +5,7 @@ pub mod library;
 pub mod official;
 pub mod organize;
 pub mod picker;
+mod picker_session;
 pub mod smartcopy;
 pub mod thumbs;
 pub mod updater;
@@ -35,8 +36,8 @@ pub struct AppState {
     pub thumb_queue: Mutex<HashSet<String>>,
     /// 剪贴板临时副本库（下次复制清上一批 + 退出全清）
     pub clipboard_temp: Mutex<smartcopy::TempStore>,
-    /// 呼出 Quick Picker 前的前台应用（复制后恢复焦点）
-    pub summoner_focus: Mutex<Option<focus::CapturedFocus>>,
+    /// 一次呼出、复制和取消共用同一个会话代数，旧任务不得操作新窗口。
+    pub picker_session: Mutex<picker_session::PickerSession>,
     pub last_paste_status: Mutex<String>,
     /// 应用偏好（与图库数据库分离存放）
     pub config: Mutex<config::AppConfig>,
@@ -74,26 +75,69 @@ fn toggle_quick_picker(app: &tauri::AppHandle) {
     let Some(picker) = app.get_webview_window("quick-picker") else {
         return;
     };
-    if picker.is_visible().unwrap_or(false) {
-        let _ = picker.hide();
+    let pending = app.state::<AppState>().picker_session.lock()
+        .is_ok_and(|session| session.is_pending());
+    if picker.is_visible().unwrap_or(false) || pending {
+        dismiss_quick_picker(app, true);
     } else {
-        // 呼出前记录前台应用（呼出方），复制成功后恢复焦点
-        {
+        let cursor = picker.cursor_position().ok();
+        let original_focus = focus::capture();
+        let generation = match app.state::<AppState>().picker_session.lock() {
+            Ok(mut session) => session.begin(),
+            Err(_) => return,
+        };
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // UI Automation 查询可能阻塞目标应用；不能在窗口事件线程执行。
+            let captured = tauri::async_runtime::spawn_blocking(move || {
+                focus::enrich_for_paste(original_focus)
+            }).await.ok().flatten();
             let state = app.state::<AppState>();
-            *state.summoner_focus.lock().unwrap() = focus::capture();
-        }
-        position_picker(&picker);
-        let _ = picker.show();
-        let _ = picker.set_focus();
-        // 呼出重置：前端监听后回到「最近使用 + 搜索聚焦 + 首项高亮」
-        let _ = app.emit_to("quick-picker", "picker-shown", ());
+            if !state
+                .picker_session
+                .lock()
+                .is_ok_and(|mut session| session.set_focus(generation, captured))
+            {
+                return;
+            }
+            let Some(picker) = app.get_webview_window("quick-picker") else {
+                state.picker_session.lock().ok().map(|mut session| session.cancel());
+                return;
+            };
+            if let Some(cursor) = cursor {
+                position_picker(&picker, cursor);
+            }
+            let _ = picker.show();
+            let _ = picker.set_focus();
+            let _ = app.emit_to("quick-picker", "picker-shown", ());
+        });
     }
 }
 
-fn position_picker(picker: &WebviewWindow) {
-    let Ok(cursor) = picker.cursor_position() else {
-        return;
-    };
+fn dismiss_quick_picker(app: &tauri::AppHandle, restore_if_foreground: bool) {
+    let focus = app
+        .state::<AppState>()
+        .picker_session
+        .lock()
+        .ok()
+        .and_then(|mut session| session.cancel());
+    if let Some(picker) = app.get_webview_window("quick-picker") {
+        if restore_if_foreground && picker.is_focused().unwrap_or(false) {
+            let _ = focus::restore(focus.as_ref());
+        }
+        let _ = picker.hide();
+    }
+}
+
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+}
+
+fn position_picker(picker: &WebviewWindow, cursor: PhysicalPosition<f64>) {
     let Ok(size) = picker.outer_size() else {
         return;
     };
@@ -101,8 +145,9 @@ fn position_picker(picker: &WebviewWindow) {
         return;
     };
 
-    let m_pos = monitor.position();
-    let m_size = monitor.size();
+    let work_area = monitor.work_area();
+    let m_pos = work_area.position;
+    let m_size = work_area.size;
     let (x, y) = picker::compute_anchor_position(
         (cursor.x, cursor.y),
         picker::Rect {
@@ -119,9 +164,13 @@ fn position_picker(picker: &WebviewWindow) {
 
 #[tauri::command]
 fn hide_picker(app: tauri::AppHandle) {
-    if let Some(picker) = app.get_webview_window("quick-picker") {
-        let _ = picker.hide();
-    }
+    dismiss_quick_picker(&app, true);
+}
+
+#[tauri::command]
+fn open_main_from_picker(app: tauri::AppHandle) {
+    dismiss_quick_picker(&app, false);
+    show_main(&app);
 }
 
 #[tauri::command]
@@ -135,10 +184,7 @@ pub fn run() {
         // 单实例：必须最先注册。第二实例启动时立即退出，并把主窗口带回前台，
         // 避免托盘图标翻倍与多实例争抢同一 SQLite 库。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.show();
-                let _ = main.set_focus();
-            }
+            show_main(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -158,6 +204,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             hide_picker,
+            open_main_from_picker,
             toggle_picker,
             commands::import_paths,
             commands::list_memes,
@@ -187,6 +234,7 @@ pub fn run() {
             commands::remove_meme_from_collection,
             commands::get_config,
             commands::set_auto_paste,
+            commands::set_wechat_compatibility_paste,
             commands::get_last_paste_status,
             updater::get_updater_status,
             updater::set_update_mode,
@@ -203,6 +251,18 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            if window.label() == "quick-picker" && matches!(event, WindowEvent::Focused(false)) {
+                let app = window.app_handle();
+                let should_hide = app.try_state::<AppState>().is_some_and(|state| {
+                    state
+                        .picker_session
+                        .lock()
+                        .is_ok_and(|mut session| session.cancel_on_blur())
+                });
+                if should_hide {
                     let _ = window.hide();
                 }
             }
@@ -240,7 +300,7 @@ pub fn run() {
                 library_root: Mutex::new(library_root),
                 thumb_queue: Mutex::new(HashSet::new()),
                 clipboard_temp,
-                summoner_focus: Mutex::new(None),
+                picker_session: Mutex::new(picker_session::PickerSession::default()),
                 last_paste_status: Mutex::new(String::new()),
                 config: Mutex::new(cfg.clone()),
                 config_path,
@@ -262,16 +322,12 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
-                        if let Some(main) = app.get_webview_window("main") {
-                            let _ = main.show();
-                            let _ = main.set_focus();
-                        }
+                        show_main(app);
                     }
                     "summon" => toggle_quick_picker(app),
                     "settings" => {
-                        if let Some(main) = app.get_webview_window("main") {
-                            let _ = main.show();
-                            let _ = main.set_focus();
+                        if app.get_webview_window("main").is_some() {
+                            show_main(app);
                             let _ = app.emit_to("main", "open-settings", ());
                         }
                     }
@@ -323,11 +379,7 @@ pub fn run() {
                             clicks.suppress_until =
                                 Some(Instant::now() + Duration::from_millis(wait as u64));
                         }
-                        if let Some(main) = tray.app_handle().get_webview_window("main") {
-                            let _ = main.unminimize();
-                            let _ = main.show();
-                            let _ = main.set_focus();
-                        }
+                        show_main(&tray.app_handle());
                     }
                     _ => {}
                 })

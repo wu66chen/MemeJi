@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MemeJi",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "identifier": "com.wesley.meme-manager",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -28,6 +28,7 @@
         "height": 420,
         "visible": false,
         "decorations": false,
+        "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": false,

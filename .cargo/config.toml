@@ -1,0 +1,4 @@
+# Include the MSVC runtime in Windows binaries so clean Windows installations
+# do not need a separate Visual C++ Redistributable installation.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

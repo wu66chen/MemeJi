@@ -11,6 +11,7 @@
   import CollectionTransferDialog from "$lib/components/CollectionTransferDialog.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { selectIds } from "$lib/selection";
+  import { getDetailPanelState } from "$lib/detail-panel-state";
   import { checkForUpdatesOnStartup } from "$lib/updater";
 
   interface Meme {
@@ -94,6 +95,7 @@
   });
 
   const selected = $derived(selectedIds.length === 1 ? memes.find((m) => m.id === selectedIds[0]) ?? null : null);
+  const detailPanelState = $derived(getDetailPanelState(detailsOpen, selectedIds.length));
   const selectedSet = $derived(new Set(selectedIds));
   const allSelectedFavorite = $derived(selectedIds.length > 0 && selectedIds.every(id => memes.find(m => m.id === id)?.is_favorite));
   const sourceId = $derived(searchScopeIds.length === 1 ? searchScopeIds[0] : searchScopeIds.length > 1 ? null : activeView.kind === 'collection' && !query.trim() ? activeView.id : null);
@@ -514,9 +516,7 @@
           <button class="icon-button" aria-label="更多所选表情操作" title="更多操作" onclick={(e) => openContextMenu(e)}><Icon name="more" size={17} /></button>
           <button class="icon-button" aria-label="清空选择" title="清空选择" onclick={clearSelection}><Icon name="x" size={16} /></button>
         {/if}
-        {#if selectedIds.length === 1}
-          <button class={`icon-button ${detailsOpen ? 'details-active' : ''}`} aria-label={detailsOpen ? '隐藏详情' : '显示详情'} title={detailsOpen ? '隐藏详情' : '显示详情'} onclick={() => (detailsOpen = !detailsOpen)}><Icon name="panel" size={17} /></button>
-        {/if}
+        <button class={`icon-button ${detailsOpen ? 'details-active' : ''}`} aria-label={detailsOpen ? '隐藏详情' : '显示详情'} title={detailsOpen ? '隐藏详情' : '显示详情'} onclick={() => (detailsOpen = !detailsOpen)}><Icon name="panel" size={17} /></button>
         {#if busy}<span class="ui-muted" role="status">正在处理…</span>{/if}
       </div>
       {#if loadError}<div role="alert" class="gallery-error"><Icon name="alert" size={17} />{loadError} <button class="ui-button small" onclick={() => void refresh()}>重试</button></div>{/if}
@@ -562,17 +562,16 @@
       {/if}
       </div>
     </section>
-    {#if selected && detailsOpen}
+    {#if detailPanelState.panelVisible}
     <DetailPanel
       disabled={busy}
-      meme={selected}
+      meme={detailPanelState.hasSelectedMeme ? selected : null}
       {allTags}
       {memberOf}
       onSaveDescription={saveDescription}
       onAddTag={addTag}
       onRemoveTag={removeTag}
       onRemoveFromCollection={removeFromCollection}
-      onClose={() => (detailsOpen = false)}
     />
     {/if}
   </div>
@@ -610,6 +609,8 @@
       <div role="separator" class="ui-menu-separator"></div>
       <button role="menuitem" class="ui-menu-item"
         onclick={() => menuCommand(() => { tagDialogOpen = true; })}><Icon name="tag" size={16} />添加标签…</button>
+      <button role="menuitem" disabled={!detailPanelState.canShowDetailsFromMenu} class="ui-menu-item"
+        onclick={() => menuCommand(() => { detailsOpen = true; })}><Icon name="panel" size={16} />显示详情</button>
       <div role="separator" class="ui-menu-separator"></div>
       <button role="menuitem" class="ui-menu-item danger"
         onclick={() => menuCommand(() => void deleteSelected())}><Icon name="trash" size={16} />删除…</button>

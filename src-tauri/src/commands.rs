@@ -233,82 +233,144 @@ pub async fn delete_memes(
 /// Smart Copy：静态图和动图都提供文件引用及位图通道，兼容不同粘贴目标。
 /// 成功后隐藏 Quick Picker 并把焦点还给呼出方应用。
 #[tauri::command]
-pub fn smart_copy(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
+pub async fn smart_copy(app: tauri::AppHandle, meme_id: i64) -> Result<(), String> {
+    let (generation, focus) = app
+        .state::<AppState>()
+        .picker_session
+        .lock()
+        .map_err(|error| error.to_string())?
+        .begin_copy()
+        .ok_or_else(|| "Quick Picker 未打开或正在复制，请稍候".to_string())?;
+
+    let result = smart_copy_in_session(&app, meme_id, generation, focus).await;
+    if let Ok(mut session) = app.state::<AppState>().picker_session.lock() {
+        session.finish_copy(generation, result.is_ok());
+    }
+    result
+}
+
+async fn smart_copy_in_session(
+    app: &tauri::AppHandle,
     meme_id: i64,
+    generation: u64,
+    focus: Option<crate::focus::CapturedFocus>,
 ) -> Result<(), String> {
-    // 1. 读库内原图
-    let (bytes, ext, hash, filename) = {
-        let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        let library_root = state.library_root_clone();
-        let (rel, ext, hash, filename) = library::find_meme_file(&conn, meme_id)
+    let worker_app = app.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
+        let state = worker_app.state::<AppState>();
+        let (bytes, ext, hash, filename) = {
+            let conn = state.conn.lock().map_err(|e| e.to_string())?;
+            let library_root = state.library_root_clone();
+            let (rel, ext, hash, filename) = library::find_meme_file(&conn, meme_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("表情不存在：{meme_id}"))?;
+            let bytes = std::fs::read(library_root.join(rel)).map_err(|e| e.to_string())?;
+            (bytes, ext, hash, filename)
+        };
+        let formats = build_clipboard_formats(&bytes, &ext, &hash, &filename, &state)?;
+        if !state
+            .picker_session
+            .lock()
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("表情不存在：{meme_id}"))?;
-        let bytes = std::fs::read(library_root.join(rel)).map_err(|e| e.to_string())?;
-        (bytes, ext, hash, filename)
-    };
-
-    // 2. 构造剪贴板格式集（Smart Copy 策略矩阵）
-    let formats = build_clipboard_formats(&bytes, &ext, &hash, &filename, &state)?;
-
-    // 3. 写剪贴板
-    smartcopy::write_clipboard(&formats)?;
-
-    // 4. 记录最近使用
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    {
-        let conn = state.conn.lock().map_err(|e| e.to_string())?;
-        crate::organize::touch_recent_at(&conn, meme_id, now).map_err(|e| e.to_string())?;
+            .is_current(generation)
+        {
+            return Ok(false);
+        }
+        smartcopy::write_clipboard(&formats)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        if let Ok(conn) = state.conn.lock() {
+            if let Err(error) = crate::organize::touch_recent_at(&conn, meme_id, now) {
+                eprintln!("更新最近使用失败: {error}");
+            }
+        }
+        Ok(true)
+    })
+    .await
+    .map_err(|error| format!("准备复制任务失败: {error}"))??;
+    if !copied || !picker_session_current(app, generation) {
+        return Ok(());
     }
 
-    // 5. 隐藏 Picker，等隐藏生效后把焦点还给呼出方
     if let Some(picker) = app.get_webview_window("quick-picker") {
         let _ = picker.hide();
     }
-    let focus = state.summoner_focus.lock().unwrap().take();
-    let auto_paste = state.config.lock().map_err(|e| e.to_string())?.auto_paste;
-    std::thread::sleep(std::time::Duration::from_millis(120));
-    crate::focus::restore(focus.as_ref());
-    let paste_status = if !auto_paste {
-        "已复制；自动粘贴已关闭".to_string()
-    } else if !crate::focus::has_editable_target(focus.as_ref()) {
-        "已复制；未识别到原输入框，可手动粘贴".to_string()
+    let (auto_paste, wechat_compatibility) = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .map(|config| (config.auto_paste, config.wechat_compatibility_paste))
+        .map_err(|error| error.to_string())?;
+    let use_wechat_compatibility = wechat_compatibility
+        && !crate::focus::has_editable_target(focus.as_ref())
+        && crate::focus::has_wechat_compatibility_target(focus.as_ref());
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    if !picker_session_current(app, generation) {
+        return Ok(());
+    }
+
+    let restore_focus = focus.clone();
+    let restore_app = app.clone();
+    let restore_result = tauri::async_runtime::spawn_blocking(move || {
+        crate::focus::restore_if_current(restore_focus.as_ref(), || picker_session_current(&restore_app, generation))
+    })
+    .await
+    .unwrap_or(Err(crate::focus::PasteFailure::SystemRejected));
+    let paste_status = if let Err(error) = restore_result {
+        format!("已复制；原窗口未恢复（{}），请手动 Ctrl+V", error.explanation())
+    } else if !auto_paste {
+        "已复制；自动粘贴已关闭，可手动 Ctrl+V".to_string()
+    } else if !crate::focus::has_editable_target(focus.as_ref()) && !use_wechat_compatibility {
+        let hint = if crate::focus::has_wechat_compatibility_target(focus.as_ref()) {
+            "；可在设置中开启微信兼容粘贴"
+        } else { "" };
+        format!(
+            "已复制；未识别到原输入框（{}），请手动 Ctrl+V{hint}",
+            crate::focus::input_diagnostic(focus.as_ref()),
+        )
     } else {
-        let mut last_failure = crate::focus::PasteFailure::InputChanged;
-        let mut sent = false;
-        // 一些应用恢复焦点较慢；短时重试时仍逐次校验原窗口与原输入目标。
+        let mut outcome = Err(crate::focus::PasteFailure::ModifierHeld);
         for _ in 0..8 {
-            std::thread::sleep(std::time::Duration::from_millis(70));
-            match crate::focus::paste_if_editable(focus.as_ref()) {
-                Ok(()) => {
-                    sent = true;
-                    break;
-                }
-                Err(failure) => {
-                    last_failure = failure;
-                    if matches!(failure, crate::focus::PasteFailure::SystemRejected) {
-                        break;
-                    }
-                }
+            tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+            if !picker_session_current(app, generation) {
+                return Ok(());
+            }
+            let paste_focus = focus.clone();
+            let paste_app = app.clone();
+            outcome = tauri::async_runtime::spawn_blocking(move || {
+                crate::focus::paste_with_policy(paste_focus.as_ref(), use_wechat_compatibility, || picker_session_current(&paste_app, generation))
+            })
+            .await
+            .unwrap_or(Err(crate::focus::PasteFailure::SystemRejected));
+            if !matches!(outcome, Err(crate::focus::PasteFailure::ModifierHeld)) {
+                break;
             }
         }
-        if sent {
-            "已向原输入框发送粘贴按键".to_string()
-        } else {
-            format!("已复制；自动粘贴未执行：{}", last_failure.explanation())
+        match outcome {
+            Ok(crate::focus::PasteMode::VerifiedInput) => "已向原输入框发送粘贴按键".to_string(),
+            Ok(crate::focus::PasteMode::WechatCompatibility) => "已向原微信窗口发送兼容粘贴按键".to_string(),
+            Err(crate::focus::PasteFailure::InputChanged) if use_wechat_compatibility => "已复制；微信兼容粘贴未执行（原窗口焦点状态已变化），请手动 Ctrl+V".to_string(),
+            Err(error) => format!("已复制；自动粘贴未执行（{}），请手动 Ctrl+V", error.explanation()),
         }
     };
-    if let Ok(mut status) = state.last_paste_status.lock() {
-        *status = paste_status.clone();
-    }
-    if paste_status.contains("未执行") {
-        eprintln!("{paste_status}");
+    if picker_session_current(app, generation) {
+        if let Ok(mut status) = app.state::<AppState>().last_paste_status.lock() {
+            *status = paste_status.clone();
+        }
+        if paste_status.contains("未执行") {
+            eprintln!("{paste_status}");
+        }
     }
     Ok(())
+}
+
+fn picker_session_current(app: &tauri::AppHandle, generation: u64) -> bool {
+    app.state::<AppState>()
+        .picker_session
+        .lock()
+        .is_ok_and(|session| session.is_current(generation))
 }
 
 #[tauri::command]
@@ -483,6 +545,13 @@ pub fn get_config(state: State<'_, AppState>) -> Result<config::AppConfig, Strin
 pub fn set_auto_paste(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
     cfg.auto_paste = enabled;
+    state.save_config(&cfg)
+}
+
+#[tauri::command]
+pub fn set_wechat_compatibility_paste(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
+    cfg.wechat_compatibility_paste = enabled;
     state.save_config(&cfg)
 }
 

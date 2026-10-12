@@ -41,7 +41,8 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
 - 按文件名、标签和描述搜索，并可跨多个收藏夹筛选
 - Quick Picker 支持键盘导航、鼠标附近呼出和快速搜索
 - Smart Copy 同时写入位图与临时文件引用，兼容不同粘贴目标；动图依靠文件引用保留动画
-- 自动粘贴默认开启；仅在 Windows 能确认原输入控件仍可编辑时发送 Ctrl+V
+- 自动粘贴默认开启；验证原窗口和可编辑控件后发送 Ctrl+V，支持 QQ 富文本输入框
+- 可选“微信兼容粘贴”（默认关闭），用于无法识别输入框的微信窗口
 - 内置 Mimu 表情包与系统托盘
 - 更新设置支持关闭、检查后询问或自动安装；GitHub 发布源配置见 [更新发布配置](docs/updater-setup.md)
 
@@ -52,6 +53,8 @@ MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用�
 从 [GitHub Releases](https://github.com/wu66chen/MemeJi/releases) 下载 `MemeJi_*_x64-setup.exe`，运行安装程序。
 
 当前安装包尚未使用 Windows Authenticode 代码签名，可能显示 SmartScreen「Windows 已保护你的电脑」和「发布者未知」。确认文件来自本项目 Releases 后，可选择「更多信息 → 仍要运行」（若已显示该按钮则直接选择）。无需关闭 Defender 或 SmartScreen。SHA-256 校验值用于核对文件完整性，不代表安全认证。
+
+0.1.6 安装包已包含 MSVC 运行库，无需单独安装 Visual C++ Redistributable。使用微信自动粘贴时，可在「设置 → 通用」开启「微信兼容粘贴」；先点击目标输入框再呼出 Quick Picker。此模式只能确认原微信窗口，无法区分窗口内部的聊天框与搜索框，不会自动发送消息。QQ 使用通常的输入框识别逻辑，无需开启此选项。
 
 可信代码签名需要证书或签名服务；新发布的已签名文件也可能尚未积累信誉。详见 [Microsoft SmartScreen 说明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)。Tauri 自动更新签名与 Windows 代码签名是两套独立机制。
 
@@ -88,6 +91,8 @@ pnpm tauri build
 ```
 
 Windows 安装包由 Tauri 生成在 `src-tauri/target/release/bundle/nsis/`。
+
+Windows 构建通过 `.cargo/config.toml` 静态链接 MSVC 运行库，避免干净系统因缺少 `VCRUNTIME140_1.dll` 无法启动。打包后运行 `pnpm verify:windows-runtime` 检查程序的 DLL 依赖；正式发布检查也包含此项。WebView2 Runtime 仍由安装程序按需安装。
 
 ## 文档
 

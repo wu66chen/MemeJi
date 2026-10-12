@@ -33,7 +33,6 @@
     onAddTag: (name: string) => Promise<void>;
     onRemoveTag: (tagId: number) => Promise<void>;
     onRemoveFromCollection: (collectionId: number) => Promise<void>;
-    onClose?: () => void;
   }
 
   let {
@@ -45,7 +44,6 @@
     onAddTag,
     onRemoveTag,
     onRemoveFromCollection,
-    onClose,
   }: Props = $props();
 
   let description = $state("");
@@ -82,7 +80,7 @@
 </script>
 
 <aside inert={disabled} class="detail-panel">
-  <div class="detail-heading"><h2>图片详情</h2>{#if onClose}<button class="icon-button round" aria-label="关闭详情" onclick={onClose}><Icon name="x" size={15}/></button>{/if}</div>
+  <div class="detail-heading"><h2>图片详情</h2></div>
   {#if meme}
     <div class="detail-scroll">
     <div class="detail-preview"><img src={convertFileSrc(meme.internal_path)} alt={meme.original_filename} /></div>

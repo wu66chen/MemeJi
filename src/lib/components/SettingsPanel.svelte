@@ -15,6 +15,7 @@
     library_root: string | null;
     update_mode: UpdateMode;
     auto_paste: boolean;
+    wechat_compatibility_paste: boolean;
   }
   interface StorageInfo {
     library_root: string;
@@ -30,6 +31,7 @@
   let { onClose, onMemesChanged }: Props = $props();
 
   let cfg = $state<AppConfig | null>(null);
+  const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
   let storage = $state<StorageInfo | null>(null);
   let pendingHotkey = $state<string | null>(null);
   let saveState = $state("");
@@ -93,6 +95,16 @@
     try {
       await invoke("set_auto_paste", { enabled });
       if (cfg) cfg.auto_paste = enabled;
+    } catch (e) {
+      alert(String(e));
+      load();
+    }
+  }
+
+  async function toggleWechatCompatibility(enabled: boolean) {
+    try {
+      await invoke("set_wechat_compatibility_paste", { enabled });
+      if (cfg) cfg.wechat_compatibility_paste = enabled;
     } catch (e) {
       alert(String(e));
       load();
@@ -195,6 +207,20 @@
           <span></span>
         </label>
       </section>
+      {#if isWindows}
+      <section class="settings-row settings-inline-row">
+        <div class="settings-row-text"><h4>微信兼容粘贴</h4><p>先点中微信输入框再呼出。此模式无法区分聊天框、搜索框等区域。</p></div>
+        <label class="settings-toggle" aria-label="微信兼容粘贴">
+          <input
+            type="checkbox"
+            checked={cfg.wechat_compatibility_paste}
+            disabled={!cfg.auto_paste}
+            onchange={(e) => void toggleWechatCompatibility(e.currentTarget.checked)}
+          />
+          <span></span>
+        </label>
+      </section>
+      {/if}
       {#if lastPasteStatus}<p class="settings-callout" role="status">最近一次粘贴：{lastPasteStatus}</p>{/if}
       {/if}
 
@@ -308,6 +334,8 @@
   .settings-toggle input:checked + span { background: var(--accent); }
   .settings-toggle input:checked + span::after { transform: translateX(15px); }
   .settings-toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .settings-toggle input:disabled { cursor: not-allowed; }
+  .settings-toggle input:disabled + span { opacity: .45; }
   .settings-options { display: grid; gap: 6px; }
   .settings-options label { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 5px 9px; border-radius: 7px; cursor: pointer; }
   .settings-options label:hover { background: var(--hover); }

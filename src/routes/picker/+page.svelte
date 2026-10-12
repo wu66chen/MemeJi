@@ -41,6 +41,7 @@
   let collectionsError = $state(false);
   let selectedId = $state<number | null>(null);
   let copyError = $state('');
+  let copyBusy = $state(false);
   let searchInput: HTMLInputElement | undefined = $state();
   let scopeContainer: HTMLDivElement | undefined = $state();
   let gridEl: HTMLDivElement | undefined = $state();
@@ -215,7 +216,8 @@
   }
 
   async function copySelected() {
-    if (selectedId === null || loading || loadError) return;
+    if (selectedId === null || loading || loadError || copyBusy) return;
+    copyBusy = true;
     try {
       // Smart Copy：后端完成剪贴板写入 + 隐藏窗口 + 恢复焦点
       await invoke("smart_copy", { memeId: selectedId });
@@ -223,6 +225,8 @@
     } catch (e) {
       console.error(e);
       copyError = `复制失败：${String(e)}`;
+    } finally {
+      copyBusy = false;
     }
   }
 
@@ -233,6 +237,7 @@
   });
 
   onMount(() => {
+    document.documentElement.classList.add('picker-window');
     void loadCollections();
     void loadMemes();
     searchInput?.focus();
@@ -241,6 +246,7 @@
     let unlisten: (() => void) | undefined;
     void listen("picker-shown", () => {
       copyError = '';
+      copyBusy = false;
       query = "";
       searchCollectionIds = [];
       scopeOpen = false;
@@ -254,6 +260,7 @@
       else unlisten = stop;
     }).catch(console.error);
     return () => {
+      document.documentElement.classList.remove('picker-window');
       disposed = true;
       unlisten?.();
       ++requestId;
@@ -283,6 +290,7 @@
         </div>
       {/if}
     </div>
+    <button type="button" class="icon-button round" aria-label="打开主界面" title="打开主界面" onclick={() => void invoke('open_main_from_picker')}><Icon name="home" size={16}/></button>
     <button type="button" class="icon-button round" aria-label="关闭 Quick Picker" title="关闭" onclick={() => void invoke('hide_picker')}><Icon name="x" size={16}/></button>
   </header>
   <div class="picker-body">
@@ -300,7 +308,7 @@
         {#if loading}<div class="ui-empty"><p>正在加载…</p></div>
         {:else if loadError}<div class="ui-empty"><div class="ui-empty-mark"><Icon name="alert" size={24}/></div><h2>加载失败</h2><button class="ui-button small" onclick={() => void loadMemes()}>重试</button></div>
         {:else if memes.length === 0}<div class="ui-empty"><div class="ui-empty-mark"><Icon name={query.trim() ? 'search' : 'image'} size={25}/></div><h2>{query.trim() ? '没有找到表情' : activeView.kind === 'recent' ? '还没有使用记录' : activeView.kind === 'favorites' ? '还没有收藏的表情' : activeView.kind === 'collection' ? '这个收藏夹还没有图片' : '图库里还没有图片'}</h2><p>{query.trim() ? '换个词或清除搜索范围再试。' : activeView.kind === 'recent' ? '复制过的表情会出现在这里。' : '可以在主窗口导入或整理表情。'}</p></div>
-        {:else}<div class="picker-grid">{#each memes as m (m.id)}<button id={`picker-cell-${m.id}`} type="button" class={`picker-cell ${m.id === selectedId ? 'active' : ''}`} title={m.original_filename} aria-label={m.original_filename} onmouseenter={() => (selectedId = m.id)} onclick={() => void copySelected()}><MemeThumb contentHash={m.content_hash} thumbnailPath={m.thumbnail_path} internalPath={m.internal_path} hoverPlay /></button>{/each}</div>{/if}
+        {:else}<div class="picker-grid">{#each memes as m (m.id)}<button id={`picker-cell-${m.id}`} type="button" class={`picker-cell ${m.id === selectedId ? 'active' : ''}`} title={m.original_filename} aria-label={m.original_filename} disabled={copyBusy} onmouseenter={() => (selectedId = m.id)} onclick={() => void copySelected()}><MemeThumb contentHash={m.content_hash} thumbnailPath={m.thumbnail_path} internalPath={m.internal_path} hoverPlay /></button>{/each}</div>{/if}
       </div>
       {#if copyError}<div class="picker-error" role="alert">{copyError}</div>{/if}
     </main>

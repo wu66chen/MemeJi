@@ -41,6 +41,8 @@ pub struct AppConfig {
     pub update_mode: UpdateMode,
     /// Smart Copy 后自动向原输入框发送粘贴快捷键。
     pub auto_paste: bool,
+    /// Opt-in window-level Ctrl+V fallback for opaque WeChat Qt windows.
+    pub wechat_compatibility_paste: bool,
 }
 
 impl Default for AppConfig {
@@ -57,6 +59,7 @@ impl Default for AppConfig {
             library_root: None,
             update_mode: UpdateMode::Prompt,
             auto_paste: true,
+            wechat_compatibility_paste: false,
         }
     }
 }
@@ -89,6 +92,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wechat_compatibility_defaults_off_and_explicit_preference_survives_save() {
+        let old: AppConfig = serde_json::from_str(r#"{"auto_paste":true}"#).unwrap();
+        assert_eq!(
+            serde_json::to_value(old).unwrap()["wechat_compatibility_paste"],
+            false
+        );
+        let enabled: AppConfig =
+            serde_json::from_str(r#"{"wechat_compatibility_paste":true}"#).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        save(&path, &enabled).unwrap();
+        assert_eq!(
+            serde_json::to_value(load(&path)).unwrap()["wechat_compatibility_paste"],
+            true
+        );
+    }
+
+    #[test]
     fn config_round_trips_all_fields() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.json");
@@ -100,6 +121,7 @@ mod tests {
             library_root: Some(r"D:\Memes".into()),
             update_mode: UpdateMode::Automatic,
             auto_paste: false,
+            wechat_compatibility_paste: true,
         };
         save(&path, &cfg).unwrap();
         let loaded = load(&path);

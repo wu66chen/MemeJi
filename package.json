@@ -1,6 +1,6 @@
 {
   "name": "meme-manager",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Windows meme library and quick picker",
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "verify:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1",
+    "verify:windows-runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-runtime.ps1",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"
   },

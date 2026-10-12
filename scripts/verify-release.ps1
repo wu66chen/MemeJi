@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $Version) { $Version = ([IO.File]::ReadAllText((Resolve-Path 'package.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json).version }
 $config = [IO.File]::ReadAllText((Resolve-Path 'src-tauri/tauri.conf.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
 if ($config.version -ne $Version) { throw "Tauri version $($config.version) differs from $Version" }
+& (Join-Path $PSScriptRoot 'verify-windows-runtime.ps1') -Path 'src-tauri/target/release/meme-manager.exe'
 $dir = 'src-tauri/target/release/bundle/nsis'
 $name = "MemeJi_${Version}_x64-setup.exe"
 $exe = Join-Path $dir $name
