@@ -9,29 +9,58 @@
 MemeJi 是一款 Windows 本地表情包管理器。导入图片后，可以用收藏夹、分类组、标签和描述整理图库，再通过全局快捷键呼出 Quick Picker 搜索、复制并粘贴表情。
 
 ## 截图展示
+#### 浅色
 
 <table>
   <tr>
     <td align="center" width="33%">
       <a href="docs/screenshots/library.png">
-        <img src="docs/screenshots/library.png" alt="图库与收藏夹分类" width="100%" />
+        <img src="docs/screenshots/library-light.png" alt="图库与收藏夹分类" width="100%" />
       </a><br />
       <strong>图库与收藏夹分类</strong>
     </td>
     <td align="center" width="33%">
-      <a href="docs/screenshots/quick-picker.png">
+      <a href="docs/screenshots/quick-picker-light.png">
         <img src="docs/screenshots/quick-picker.png" alt="Quick Picker" width="100%" />
       </a><br />
       <strong>Quick Picker</strong>
     </td>
-    <td align="center" width="20%">
-      <a href="docs/screenshots/settings.png">
+    <td align="center" width="28%">
+      <a href="docs/screenshots/settings-light.png">
         <img src="docs/screenshots/settings.png" alt="设置" width="100%" />
       </a><br />
       <strong>设置</strong>
     </td>
   </tr>
 </table>
+
+<details>
+<summary>深色</summary>
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="docs/screenshots/library.png">
+        <img src="docs/screenshots/library-dark.png" alt="图库与收藏夹分类" width="100%" />
+      </a><br />
+      <strong>图库与收藏夹分类</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="docs/screenshots/quick-picker.png">
+        <img src="docs/screenshots/quick-picker-dark.png" alt="Quick Picker" width="100%" />
+      </a><br />
+      <strong>Quick Picker</strong>
+    </td>
+    <td align="center" width="28%">
+      <a href="docs/screenshots/settings-dark.png">
+        <img src="docs/screenshots/settings.png" alt="设置" width="100%" />
+      </a><br />
+      <strong>设置</strong>
+    </td>
+  </tr>
+</table>
+
+</details>
 
 ## 功能
 
